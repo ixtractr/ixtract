@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ixtract"
+version = "0.1.0"
+description = "Deterministic adaptive extraction runtime"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "ARKY" }]
+keywords = ["extraction", "data", "pipeline", "adaptive", "deterministic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Database",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+# Phase 1 core dependencies
+dependencies = [
+    "click>=8.0",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "pyarrow>=14.0",
+]
+
+[project.optional-dependencies]
+mysql = ["pymysql"]
+sqlserver = ["pyodbc"]
+cloud = ["boto3", "google-cloud-storage"]
+all = ["ixtract[mysql,sqlserver,cloud]"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+]
+
+[project.scripts]
+ixtract = "ixtract.cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
