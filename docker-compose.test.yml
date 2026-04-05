@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ixtract-test-db
+    environment:
+      POSTGRES_USER: ixtract
+      POSTGRES_PASSWORD: ixtract_test
+      POSTGRES_DB: ixtract_test
+    ports:
+      - "5433:5432"  # Use 5433 to avoid conflicts with local PostgreSQL
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ixtract -d ixtract_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
