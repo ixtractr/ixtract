@@ -333,7 +333,10 @@ def execute(object_name, host, port, database, user, password, connection_string
             click.echo(f"Skew (chunk duration): {skew_label} ({skew_ratio:.1f}x max/median)")
 
         if diag:
-            click.echo(f"Diagnosis: {diag.category.value}")
+            diag_label = diag.category.value
+            if "Confirmed" in diag.corrective_action:
+                diag_label += " (confirmed)"
+            click.echo(f"Diagnosis: {diag_label}")
             click.echo(f"  {diag.reasoning}")
 
         if ctrl_out:
@@ -424,13 +427,343 @@ def explain(run_id, object_name, state_db):
     elif object_name:
         runs = store.get_recent_runs("postgresql", object_name, limit=1)
         if runs:
-            # Recurse with the run_id
             ctx = click.get_current_context()
             ctx.invoke(explain, run_id=runs[0]["run_id"], object_name=None, state_db=state_db)
         else:
             click.echo(f"No runs found for {object_name}.")
     else:
         click.echo("Provide a run_id or --object name.")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# diagnose — "What's wrong? Is this skew? What should I do?"
+# ══════════════════════════════════════════════════════════════════════
+
+@cli.command()
+@click.argument("run_id", required=False)
+@click.option("--object", "object_name", default=None, help="Object name (uses last run)")
+@click.option("--state-db", default="ixtract_state.db")
+def diagnose(run_id, object_name, state_db):
+    """Diagnose a run: chunk-level breakdown, skew analysis, worker distribution."""
+    from ixtract.state import StateStore
+
+    store = StateStore(state_db)
+    run, run_id = _resolve_run(store, run_id, object_name)
+    if not run:
+        return
+
+    chunks = store.get_chunks(run_id)
+    if not chunks:
+        click.echo(f"No chunk data recorded for run {run_id}.")
+        click.echo("(Chunk recording requires Phase 1 final or later.)")
+        return
+
+    # ── Chunk analysis ────────────────────────────────────────────
+    success_chunks = [c for c in chunks if c["status"] == "success"]
+    failed_chunks = [c for c in chunks if c["status"] == "failed"]
+
+    if not success_chunks:
+        click.echo(f"\nAll {len(chunks)} chunks failed.")
+        for fc in failed_chunks:
+            click.echo(f"  {fc['chunk_id']}: {fc.get('error', 'unknown')}")
+        return
+
+    durations = sorted(c["duration_seconds"] for c in success_chunks)
+    median_dur = durations[len(durations) // 2]
+    max_dur = durations[-1]
+    min_dur = durations[0]
+    skew_ratio = max_dur / median_dur if median_dur > 0 else 1.0
+
+    if skew_ratio > 3.0:
+        skew_label, severity = "HIGH", "Severe"
+    elif skew_ratio > 1.5:
+        skew_label, severity = "MODERATE", "Moderate"
+    else:
+        skew_label, severity = "LOW", "Minimal"
+
+    # Find slowest and fastest
+    chunks_by_dur = sorted(success_chunks, key=lambda c: c["duration_seconds"], reverse=True)
+    slowest = chunks_by_dur[0]
+    fastest = chunks_by_dur[-1]
+
+    # Per-worker distribution
+    worker_stats: dict[int, dict] = {}
+    for c in success_chunks:
+        wid = c.get("worker_id", 0)
+        if wid not in worker_stats:
+            worker_stats[wid] = {"chunks": 0, "rows": 0, "time": 0.0}
+        worker_stats[wid]["chunks"] += 1
+        worker_stats[wid]["rows"] += c.get("rows", 0)
+        worker_stats[wid]["time"] += c.get("duration_seconds", 0)
+
+    # Get deviation
+    with store._conn() as conn:
+        dev = conn.execute(
+            "SELECT * FROM deviations WHERE run_id = ?", (run_id,)
+        ).fetchone()
+
+    # ── Output ────────────────────────────────────────────────────
+    click.echo(f"\nDiagnosis: {run['object']} (run {run_id})")
+
+    # Deviation
+    if dev:
+        dev = dict(dev)
+        cause = dev["diagnosed_cause"]
+        # Polish: confirmed label for recovery cases
+        if "Confirmed" in (dev.get("corrective_action") or ""):
+            cause += " (confirmed)"
+        click.echo(f"\n  Category: {cause}")
+        click.echo(f"  {dev['reasoning']}")
+        click.echo(f"  {dev['corrective_action']}")
+
+    # Skew
+    click.echo(f"\nSkew Analysis:")
+    click.echo(f"  Severity:   {severity} ({skew_ratio:.1f}x max/median)")
+    click.echo(f"  Fastest:    {fastest['chunk_id']} ({fastest['duration_seconds']:.2f}s, "
+               f"{fastest.get('rows', 0):,} rows)")
+    click.echo(f"  Slowest:    {slowest['chunk_id']} ({slowest['duration_seconds']:.2f}s, "
+               f"{slowest.get('rows', 0):,} rows)")
+    if skew_ratio > 1.5:
+        click.echo(f"  \u26A0 Top 3 slowest chunks:")
+        for c in chunks_by_dur[:3]:
+            click.echo(f"      {c['chunk_id']}: {c['duration_seconds']:.2f}s "
+                       f"({c.get('rows', 0):,} rows)")
+
+    # Workers
+    click.echo(f"\nWorker Distribution:")
+    for wid in sorted(worker_stats):
+        ws = worker_stats[wid]
+        click.echo(f"  Worker {wid}: {ws['chunks']} chunks, "
+                   f"{ws['rows']:,} rows, {ws['time']:.1f}s total")
+
+    # Suggestions
+    click.echo(f"\nSuggestion:")
+    if skew_ratio > 3.0:
+        click.echo(f"  \u2192 Severe skew detected. Consider work-stealing scheduling (Phase 2).")
+        click.echo(f"  \u2192 Or: increase chunk count to distribute hot ranges.")
+    elif skew_ratio > 1.5:
+        click.echo(f"  \u2192 Moderate skew. Monitor across runs.")
+        click.echo(f"  \u2192 Work-stealing (Phase 2) would improve this.")
+    elif failed_chunks:
+        click.echo(f"  \u2192 {len(failed_chunks)} chunk(s) failed. Check source connectivity.")
+    else:
+        click.echo(f"  \u2192 No issues detected. Extraction is balanced.")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# history — "Is it getting better or worse? Has it converged?"
+# ══════════════════════════════════════════════════════════════════════
+
+@cli.command()
+@click.argument("object_name")
+@click.option("--limit", default=10, type=int, help="Number of recent runs to show")
+@click.option("--state-db", default="ixtract_state.db")
+def history(object_name, limit, state_db):
+    """Show extraction history and convergence status for an object."""
+    from ixtract.state import StateStore
+
+    store = StateStore(state_db)
+    runs = store.get_recent_runs("postgresql", object_name, limit=limit)
+
+    if not runs:
+        click.echo(f"No runs found for {object_name}.")
+        return
+
+    # Reverse to show oldest first
+    runs = list(reversed(runs))
+
+    click.echo(f"\nExtraction History: {object_name} (last {len(runs)} runs)")
+    click.echo()
+
+    # Table header
+    click.echo(f"  {'Run':<8} {'Workers':>7}  {'Throughput':>11}  {'Duration':>9}  {'Status':>8}  {'Diagnosis'}")
+    click.echo(f"  {'───':<8} {'───────':>7}  {'──────────':>11}  {'────────':>9}  {'──────':>8}  {'─────────'}")
+
+    # Table rows
+    for run in runs:
+        run_short = run["run_id"].split("-")[-1] if run["run_id"] else "?"
+        tp_str = _fmt_tp(run.get("avg_throughput", 0))
+        dur_str = _fmt_duration(run.get("duration_seconds"))
+
+        # Get diagnosis for this run
+        with store._conn() as conn:
+            dev = conn.execute(
+                "SELECT diagnosed_cause FROM deviations WHERE run_id = ? LIMIT 1",
+                (run["run_id"],)
+            ).fetchone()
+        diag_str = dev["diagnosed_cause"] if dev else "—"
+
+        click.echo(f"  {run_short:<8} {run.get('worker_count', '?'):>7}  "
+                   f"{tp_str:>11}  {dur_str:>9}  "
+                   f"{run.get('status', '?'):>8}  {diag_str}")
+
+    # Convergence status
+    ctrl = store.get_controller_state("postgresql", object_name)
+    click.echo()
+    if ctrl:
+        if ctrl.converged:
+            click.echo(f"Convergence: CONVERGED at {ctrl.current_workers} workers")
+        else:
+            click.echo(f"Convergence: Exploring ({ctrl.consecutive_holds}/3 holds, "
+                       f"direction: {ctrl.direction.value})")
+    else:
+        click.echo(f"Convergence: No controller state (run ixtract execute first)")
+
+    # Trends (if enough data)
+    if len(runs) >= 3:
+        throughputs = [r.get("avg_throughput", 0) for r in runs if r.get("avg_throughput")]
+        rows_list = [r.get("total_rows", 0) for r in runs if r.get("total_rows")]
+
+        if len(throughputs) >= 3:
+            tp_first = throughputs[0]
+            tp_last = throughputs[-1]
+            tp_trend = (tp_last - tp_first) / tp_first * 100 if tp_first > 0 else 0
+            trend_dir = "\u2191" if tp_trend > 5 else ("\u2193" if tp_trend < -5 else "\u2192")
+            click.echo(f"Throughput trend: {trend_dir} {tp_trend:+.1f}% "
+                       f"(first: {_fmt_tp(tp_first)}, latest: {_fmt_tp(tp_last)})")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# metrics — "What actually happened? Where was time spent?"
+# ══════════════════════════════════════════════════════════════════════
+
+@cli.command()
+@click.argument("run_id", required=False)
+@click.option("--object", "object_name", default=None, help="Object name (uses last run)")
+@click.option("--state-db", default="ixtract_state.db")
+def metrics(run_id, object_name, state_db):
+    """Show detailed metrics for a run: throughput, workers, chunks, skew."""
+    from ixtract.state import StateStore
+
+    store = StateStore(state_db)
+    run, run_id = _resolve_run(store, run_id, object_name)
+    if not run:
+        return
+
+    chunks = store.get_chunks(run_id)
+
+    # ── Throughput ────────────────────────────────────────────────
+    click.echo(f"\nRun Metrics: {run_id}")
+    click.echo()
+    click.echo(f"Throughput:")
+    click.echo(f"  Avg: {run['avg_throughput']:,.0f} rows/sec")
+
+    if chunks:
+        success_chunks = [c for c in chunks if c["status"] == "success"]
+        if success_chunks:
+            # Per-chunk throughput
+            chunk_tps = []
+            for c in success_chunks:
+                dur = c.get("duration_seconds", 0)
+                rows = c.get("rows", 0)
+                if dur > 0:
+                    chunk_tps.append((c["chunk_id"], rows / dur, rows, dur))
+
+            if chunk_tps:
+                chunk_tps.sort(key=lambda x: x[1], reverse=True)
+                best = chunk_tps[0]
+                worst = chunk_tps[-1]
+                click.echo(f"  Peak: {best[1]:,.0f} rows/sec ({best[0]})")
+                click.echo(f"  Min:  {worst[1]:,.0f} rows/sec ({worst[0]})")
+
+    # ── Workers ───────────────────────────────────────────────────
+    click.echo(f"\nWorkers:")
+    click.echo(f"  Planned: {run['worker_count']}  |  "
+               f"Effective: {run.get('effective_workers', run['worker_count'])}")
+
+    # Load worker metrics
+    with store._conn() as conn:
+        wm_rows = conn.execute(
+            "SELECT * FROM worker_metrics WHERE run_id = ? ORDER BY worker_id",
+            (run_id,),
+        ).fetchall()
+
+    if wm_rows:
+        for wm in wm_rows:
+            wm = dict(wm)
+            click.echo(f"  Worker {wm['worker_id']}: {wm['chunks_processed']} chunks, "
+                       f"{wm.get('total_rows', 0):,} rows"
+                       + (f", idle {wm['idle_pct']:.0f}%" if wm.get('idle_pct') else ""))
+
+    # ── Chunks ────────────────────────────────────────────────────
+    if chunks:
+        success = [c for c in chunks if c["status"] == "success"]
+        failed = [c for c in chunks if c["status"] == "failed"]
+
+        click.echo(f"\nChunks:")
+        click.echo(f"  Total: {len(chunks)}  |  Succeeded: {len(success)}  |  "
+                   f"Failed: {len(failed)}")
+
+        if success:
+            durations = sorted(c["duration_seconds"] for c in success)
+            median_dur = durations[len(durations) // 2]
+            max_dur = durations[-1]
+            min_dur = durations[0]
+            skew_ratio = max_dur / median_dur if median_dur > 0 else 1.0
+
+            fastest = min(success, key=lambda c: c["duration_seconds"])
+            slowest = max(success, key=lambda c: c["duration_seconds"])
+
+            click.echo(f"  Fastest: {fastest['chunk_id']} ({fastest['duration_seconds']:.2f}s)")
+            click.echo(f"  Slowest: {slowest['chunk_id']} ({slowest['duration_seconds']:.2f}s)")
+
+            if len(success) > 1:
+                cv = _chunk_cv(durations)
+                click.echo(f"  Chunk CV: {cv:.2f}  |  "
+                           f"Skew ratio: {skew_ratio:.1f}x max/median")
+
+        if failed:
+            click.echo(f"\n  Failed chunks:")
+            for fc in failed:
+                click.echo(f"    {fc['chunk_id']}: {fc.get('error', 'unknown')}")
+
+    # ── Run context ───────────────────────────────────────────────
+    click.echo(f"\nRun:")
+    click.echo(f"  Duration: {_fmt_duration(run['duration_seconds'])}  |  "
+               f"Status: {run['status']}  |  Strategy: {run.get('strategy', 'n/a')}")
+    click.echo(f"  Rows: {run['total_rows']:,}  |  Bytes: {run.get('total_bytes', 0):,}")
+
+
+# ── Shared helpers ────────────────────────────────────────────────────
+
+def _resolve_run(store, run_id, object_name):
+    """Find a run by ID or by object name (latest). Returns (run_dict, run_id) or (None, None)."""
+    if run_id:
+        with store._conn() as conn:
+            run = conn.execute(
+                "SELECT * FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if not run:
+                run = conn.execute(
+                    "SELECT * FROM runs WHERE run_id LIKE ? ORDER BY start_time DESC LIMIT 1",
+                    (f"{run_id}%",)
+                ).fetchone()
+        if not run:
+            click.echo(f"Run {run_id} not found.")
+            return None, None
+        return dict(run), run["run_id"]
+
+    elif object_name:
+        runs = store.get_recent_runs("postgresql", object_name, limit=1)
+        if runs:
+            return runs[0], runs[0]["run_id"]
+        click.echo(f"No runs found for {object_name}.")
+        return None, None
+
+    click.echo("Provide a run_id or --object name.")
+    return None, None
+
+
+def _chunk_cv(durations):
+    """Coefficient of variation for chunk durations."""
+    n = len(durations)
+    if n < 2:
+        return 0.0
+    mean = sum(durations) / n
+    if mean <= 0:
+        return 0.0
+    var = sum((d - mean) ** 2 for d in durations) / n
+    return (var ** 0.5) / mean
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
