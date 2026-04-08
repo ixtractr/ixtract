@@ -304,9 +304,11 @@ def _estimate_throughput(
         return min(single_worker_tp * math.sqrt(worker_count), 500_000)
 
     # Sub-millisecond latency (local DB, fast network): use size-based estimate
-    # Assume ~50MB/sec throughput per worker (conservative for local, generous for remote)
+    # 25MB/sec per worker is conservative — accounts for serialization + write overhead
+    # (50MB was 2x too optimistic based on real-world measurements: ~218K rows/sec at 2 workers
+    #  on local Docker with 138 bytes/row = ~30MB/sec effective)
     if profile.avg_row_bytes > 0 and profile.row_estimate > 0:
-        bytes_per_sec = 50_000_000 * math.sqrt(worker_count)
+        bytes_per_sec = 25_000_000 * math.sqrt(worker_count)
         return min(bytes_per_sec / max(profile.avg_row_bytes, 1), 500_000)
 
     return DEFAULT_THROUGHPUT

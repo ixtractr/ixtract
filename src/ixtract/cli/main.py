@@ -82,9 +82,10 @@ def profile(object_name, host, port, database, user, password, connection_string
 @click.option("--output", default="./output", help="Output directory")
 @click.option("--compression", default="snappy", help="Parquet compression")
 @click.option("--max-workers", default=None, type=int, help="Max worker count cap")
+@click.option("--standard", "detail_level", flag_value="standard", help="Show worker resolution and estimation reasoning")
 @click.option("--state-db", default="ixtract_state.db", help="State store path")
 def plan(object_name, host, port, database, user, password, connection_string,
-         output, compression, max_workers, state_db):
+         output, compression, max_workers, detail_level, state_db):
     """Show the extraction plan without executing."""
     from ixtract.connectors.postgresql import PostgreSQLConnector
     from ixtract.profiler import SourceProfiler
@@ -92,18 +93,18 @@ def plan(object_name, host, port, database, user, password, connection_string,
     from ixtract.intent import ExtractionIntent, SourceType, TargetType, ExtractionConstraints
     from ixtract.state import StateStore
     from ixtract.controller import ControllerState
+    import os
 
     config = _build_config(host, port, database, user, password, connection_string)
+    standard = detail_level == "standard"
 
     connector = PostgreSQLConnector()
     connector.connect(config)
 
     try:
-        # Profile
         profiler = SourceProfiler(connector)
         prof = profiler.profile(object_name)
 
-        # Build intent
         intent = ExtractionIntent(
             source_type=SourceType.POSTGRESQL,
             source_config=config,
@@ -113,14 +114,54 @@ def plan(object_name, host, port, database, user, password, connection_string,
             constraints=ExtractionConstraints(max_workers=max_workers),
         )
 
-        # Check state store for controller history
         store = StateStore(state_db)
         ctrl_state = store.get_controller_state("postgresql", object_name)
 
-        # Plan
         exec_plan = plan_extraction(intent, prof, store, ctrl_state)
         summary = format_plan_summary(exec_plan, prof, ctrl_state)
         click.echo(f"\n{summary}")
+
+        if standard:
+            # ── Worker resolution breakdown ──────────────────────
+            click.echo(f"\nWorker Resolution:")
+            if ctrl_state and ctrl_state.last_throughput > 0:
+                click.echo(f"  Source:        controller ({ctrl_state.current_workers} workers"
+                           + (", converged" if ctrl_state.converged else ", exploring") + ")")
+            else:
+                click.echo(f"  Source:        profiler (first run, {prof.recommended_start_workers} workers)")
+            click.echo(f"  Source slots:  {prof.available_connections_safe} (50% of {prof.max_connections - prof.active_connections} available)")
+            click.echo(f"  System CPUs:   {os.cpu_count() or 'unknown'}")
+            if max_workers:
+                click.echo(f"  Intent cap:    {max_workers}")
+            click.echo(f"  \u2192 Result:      {exec_plan.worker_count} workers")
+
+            # ── Estimation reasoning ─────────────────────────────
+            baseline = store.get_heuristic("postgresql", object_name, "throughput_baseline")
+            click.echo(f"\nEstimation:")
+            if baseline and baseline > 0:
+                click.echo(f"  Throughput:    {baseline:,.0f} rows/sec (from stored baseline)")
+                click.echo(f"  Confidence:    high (based on actual previous runs)")
+            else:
+                click.echo(f"  Throughput:    {exec_plan.cost_estimate.predicted_throughput_rows_sec:,.0f} rows/sec (estimated from profiler)")
+                click.echo(f"  Confidence:    low (no historical data, first run)")
+            click.echo(f"  Est. rows:     {exec_plan.cost_estimate.predicted_total_rows:,}")
+            click.echo(f"  Est. duration: {_fmt_duration(exec_plan.cost_estimate.predicted_duration_seconds)}")
+
+            # ── Safety detail ────────────────────────────────────
+            click.echo(f"\nSafety:")
+            conn_pct = exec_plan.worker_count * 100 // prof.max_connections
+            click.echo(f"  Connections:   {exec_plan.worker_count}/{prof.max_connections} ({conn_pct}%) \u2714")
+            try:
+                stat = os.statvfs(output)
+                free_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
+                need_gb = exec_plan.cost_estimate.predicted_total_bytes / (1024**3)
+                click.echo(f"  Disk:          {free_gb:.1f}GB free, need ~{need_gb:.1f}GB \u2714")
+            except OSError:
+                pass
+            click.echo(f"  Consistency:   snapshot isolation (REPEATABLE READ)")
+            est_min = exec_plan.cost_estimate.predicted_duration_seconds / 60
+            if est_min > 30:
+                click.echo(f"  \u26A0 Snapshot duration ({est_min:.0f}m) exceeds 30m threshold")
 
     finally:
         connector.close()
@@ -137,10 +178,11 @@ def plan(object_name, host, port, database, user, password, connection_string,
 @click.option("--output", default="./output", help="Output directory")
 @click.option("--compression", default="snappy")
 @click.option("--max-workers", default=None, type=int)
+@click.option("--window-size", default=5, type=int, help="Controller window size (runs before deciding)")
 @click.option("--state-db", default="ixtract_state.db")
 @click.option("-v", "--verbose", is_flag=True)
 def execute(object_name, host, port, database, user, password, connection_string,
-            output, compression, max_workers, state_db, verbose):
+            output, compression, max_workers, window_size, state_db, verbose):
     """Extract data from source to Parquet."""
     _setup_logging(verbose)
 
@@ -177,7 +219,7 @@ def execute(object_name, host, port, database, user, password, connection_string
 
         # 3. Controller state
         ctrl_state = store.get_controller_state("postgresql", object_name)
-        controller = ParallelismController()
+        controller = ParallelismController(ControllerConfig(window_size=window_size))
 
         # 4. Plan
         exec_plan = plan_extraction(intent, prof, store, ctrl_state)
@@ -201,6 +243,7 @@ def execute(object_name, host, port, database, user, password, connection_string
             result.run_id, result.status.lower(),
             result.total_rows, result.total_bytes,
             result.avg_throughput, result.duration_seconds,
+            effective_workers=float(result.worker_count),
         )
 
         # 7b. Record per-chunk results (for Phase 2 diagnose/metrics commands)
@@ -231,7 +274,7 @@ def execute(object_name, host, port, database, user, password, connection_string
         if result.metrics:
             analyzer = DeviationAnalyzer()
 
-            # Use ACTUAL previous run's worker count and throughput from state store
+            # Use ACTUAL previous run's worker count and throughput
             if recent_runs:
                 prev_tp = recent_runs[0].get("avg_throughput", 0.0)
                 prev_wc = recent_runs[0].get("worker_count", 0)
@@ -258,41 +301,24 @@ def execute(object_name, host, port, database, user, password, connection_string
             diag = analyzer.diagnose(metrics)
             store.record_deviation(result.run_id, diag)
 
-            # 8. Controller evaluation
+            # 9. Controller evaluation (window-based)
             from ixtract.controller import ControllerState, ControllerOutput, ControllerDecision
 
+            # Seed controller from profiler on first run (not cold start)
             if ctrl_state is None:
-                ctrl_state = ControllerState.cold_start(controller.config)
+                ctrl_state = ControllerState.from_profiler(exec_plan.worker_count)
 
-            ctrl_out = controller.evaluate(result.avg_throughput, ctrl_state)
+            # Build throughput window: last N runs at the CURRENT worker count
+            # Include the run we just finished (already recorded in state store)
+            all_recent = store.get_recent_runs("postgresql", object_name,
+                                                limit=window_size + 5)
+            throughput_window = [
+                r["avg_throughput"] for r in reversed(all_recent)
+                if r.get("worker_count") == ctrl_state.current_workers
+                   and r.get("avg_throughput", 0) > 0
+            ][-window_size:]  # take last window_size entries, oldest first
 
-            # 9. "Revisit lower bound once" rule:
-            # If we're over-parallel AND above the profiler's recommendation,
-            # try the profiler's value instead of continuing upward. One-shot.
-            revisit_applied = store.get_heuristic(
-                "postgresql", object_name, "revisit_lower_applied"
-            )
-            if (not revisit_applied
-                and diag.category.value == "over_parallel"
-                and exec_plan.worker_count > prof.recommended_start_workers
-            ):
-                revisit_workers = prof.recommended_start_workers
-                revisit_state = ControllerState(
-                    current_workers=revisit_workers,
-                    last_throughput=result.avg_throughput,
-                    last_worker_count=exec_plan.worker_count,
-                    direction=ControllerDecision.HOLD,  # observe from here, don't keep going
-                    consecutive_holds=0,
-                    converged=False,
-                )
-                ctrl_out = ControllerOutput(
-                    recommended_workers=revisit_workers,
-                    decision=ControllerDecision.HOLD,
-                    reasoning=f"Cold start overshot. Revisiting profiler recommendation ({revisit_workers} workers).",
-                    new_state=revisit_state,
-                )
-                store.set_heuristic("postgresql", object_name, "revisit_lower_applied", 1.0)
-
+            ctrl_out = controller.evaluate(throughput_window, ctrl_state)
             store.save_controller_state("postgresql", object_name, ctrl_out.new_state)
 
             store.set_heuristic(
@@ -364,52 +390,60 @@ def execute(object_name, host, port, database, user, password, connection_string
 @cli.command()
 @click.argument("run_id", required=False)
 @click.option("--object", "object_name", default=None, help="Object name to explain last run")
+@click.option("--standard", "detail_level", flag_value="standard", help="Show evidence table and chunk detail")
 @click.option("--state-db", default="ixtract_state.db")
-def explain(run_id, object_name, state_db):
+def explain(run_id, object_name, detail_level, state_db):
     """Explain why a run behaved the way it did."""
     from ixtract.state import StateStore
 
     store = StateStore(state_db)
+    standard = detail_level == "standard"
 
     if run_id:
         click.echo(f"Explaining run {run_id}...")
         with store._conn() as conn:
-            # Try exact match first, then prefix match
             run = conn.execute(
                 "SELECT * FROM runs WHERE run_id = ?", (run_id,)
             ).fetchone()
-
             if not run:
                 run = conn.execute(
                     "SELECT * FROM runs WHERE run_id LIKE ? ORDER BY start_time DESC LIMIT 1",
                     (f"{run_id}%",)
                 ).fetchone()
-
             if not run:
                 click.echo(f"Run {run_id} not found.")
                 return
-
             run = dict(run)
 
-            # Get deviation
             dev = conn.execute(
                 "SELECT * FROM deviations WHERE run_id = ?", (run["run_id"],)
             ).fetchone()
 
-            # Get previous run for delta comparison
             prev_run = conn.execute(
-                "SELECT avg_throughput, worker_count FROM runs "
+                "SELECT * FROM runs "
                 "WHERE source = ? AND object = ? AND start_time < ? "
                 "ORDER BY start_time DESC LIMIT 1",
                 (run["source"], run["object"], run["start_time"]),
             ).fetchone()
 
+            chunks = []
+            worker_rows = []
+            if standard:
+                chunks = [dict(c) for c in conn.execute(
+                    "SELECT * FROM chunks WHERE run_id = ? ORDER BY chunk_id",
+                    (run["run_id"],)
+                ).fetchall()]
+                worker_rows = [dict(w) for w in conn.execute(
+                    "SELECT * FROM worker_metrics WHERE run_id = ? ORDER BY worker_id",
+                    (run["run_id"],)
+                ).fetchall()]
+
+        # ── Summary (always shown) ───────────────────────────────
         click.echo(f"\nRun: {run['run_id']}  |  {run['object']}  |  "
                     f"{_fmt_duration(run['duration_seconds'])}")
         click.echo(f"Status: {run['status']}")
         click.echo(f"Rows: {run['total_rows']:,}  |  Workers: {run['worker_count']}")
 
-        # Throughput with delta on one line
         if prev_run and prev_run["avg_throughput"] and prev_run["avg_throughput"] > 0:
             prev_tp_val = prev_run["avg_throughput"]
             delta_pct = (run["avg_throughput"] - prev_tp_val) / prev_tp_val * 100
@@ -420,15 +454,55 @@ def explain(run_id, object_name, state_db):
 
         if dev:
             dev = dict(dev)
-            click.echo(f"\nDiagnosis: {dev['diagnosed_cause']}")
+            diag_label = dev["diagnosed_cause"]
+            if "Confirmed" in (dev.get("corrective_action") or ""):
+                diag_label += " (confirmed)"
+            click.echo(f"\nDiagnosis: {diag_label}")
             click.echo(f"  {dev['reasoning']}")
             click.echo(f"  {dev['corrective_action']}")
+
+        # ── Standard: evidence table ─────────────────────────────
+        if standard and prev_run:
+            prev_run = dict(prev_run)
+            click.echo(f"\nEvidence:")
+            click.echo(f"  {'Metric':<22} {'Previous':>12} {'This Run':>12} {'Delta':>10}")
+            click.echo(f"  {'──────':<22} {'────────':>12} {'────────':>12} {'─────':>10}")
+            _evidence_row("Workers", prev_run.get("worker_count"), run["worker_count"], is_int=True)
+            _evidence_row("Throughput", prev_run.get("avg_throughput"), run["avg_throughput"], fmt="tp")
+            _evidence_row("Duration", prev_run.get("duration_seconds"), run["duration_seconds"], fmt="dur")
+            _evidence_row("Rows", prev_run.get("total_rows"), run["total_rows"], is_int=True)
+
+        # ── Standard: chunk detail ───────────────────────────────
+        if standard and chunks:
+            success_c = [c for c in chunks if c["status"] == "success"]
+            if success_c:
+                durations = sorted(c["duration_seconds"] for c in success_c)
+                click.echo(f"\nChunk Detail:")
+                click.echo(f"  {'Chunk':<12} {'Rows':>10} {'Duration':>10} {'Rows/sec':>12} {'Worker':>7}")
+                click.echo(f"  {'─────':<12} {'────':>10} {'────────':>10} {'────────':>12} {'──────':>7}")
+                for c in sorted(success_c, key=lambda x: x["chunk_id"]):
+                    dur = c["duration_seconds"]
+                    rows = c.get("rows", 0)
+                    tp = rows / dur if dur > 0 else 0
+                    click.echo(f"  {c['chunk_id']:<12} {rows:>10,} {dur:>9.2f}s {tp:>11,.0f} {c.get('worker_id', '?'):>7}")
+                median_d = durations[len(durations) // 2]
+                max_d = durations[-1]
+                skew = max_d / median_d if median_d > 0 else 1.0
+                click.echo(f"\n  Skew: {skew:.1f}x max/median  |  CV: {_chunk_cv(durations):.2f}")
+
+        # ── Standard: worker detail ──────────────────────────────
+        if standard and worker_rows:
+            click.echo(f"\nWorker Detail:")
+            for wm in worker_rows:
+                click.echo(f"  Worker {wm['worker_id']}: {wm['chunks_processed']} chunks, "
+                           f"{wm.get('total_rows', 0):,} rows")
 
     elif object_name:
         runs = store.get_recent_runs("postgresql", object_name, limit=1)
         if runs:
             ctx = click.get_current_context()
-            ctx.invoke(explain, run_id=runs[0]["run_id"], object_name=None, state_db=state_db)
+            ctx.invoke(explain, run_id=runs[0]["run_id"], object_name=None,
+                       detail_level=detail_level, state_db=state_db)
         else:
             click.echo(f"No runs found for {object_name}.")
     else:
@@ -767,6 +841,31 @@ def _chunk_cv(durations):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
+
+def _evidence_row(label, prev_val, curr_val, is_int=False, fmt=None):
+    """Print one row of the evidence table."""
+    if fmt == "tp":
+        pv = _fmt_tp(prev_val) if prev_val else "—"
+        cv = _fmt_tp(curr_val) if curr_val else "—"
+    elif fmt == "dur":
+        pv = _fmt_duration(prev_val) if prev_val else "—"
+        cv = _fmt_duration(curr_val) if curr_val else "—"
+    elif is_int:
+        pv = f"{prev_val:,}" if isinstance(prev_val, (int, float)) else "—"
+        cv = f"{curr_val:,}" if isinstance(curr_val, (int, float)) else "—"
+    else:
+        pv = str(prev_val) if prev_val is not None else "—"
+        cv = str(curr_val) if curr_val is not None else "—"
+
+    if isinstance(prev_val, (int, float)) and isinstance(curr_val, (int, float)) and prev_val > 0:
+        if is_int:
+            delta = f"{int(curr_val - prev_val):+d}"
+        else:
+            delta = f"{(curr_val - prev_val) / prev_val * 100:+.1f}%"
+    else:
+        delta = "—"
+
+    click.echo(f"  {label:<22} {pv:>12} {cv:>12} {delta:>10}")
 
 def _build_config(host, port, database, user, password, connection_string):
     if connection_string:

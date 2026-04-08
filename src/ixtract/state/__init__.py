@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS controller_state (
     direction         TEXT NOT NULL,
     consecutive_holds INTEGER NOT NULL DEFAULT 0,
     converged         INTEGER NOT NULL DEFAULT 0,
+    previous_workers  INTEGER NOT NULL DEFAULT 0,
+    previous_avg_throughput REAL NOT NULL DEFAULT 0.0,
     updated_at        TEXT NOT NULL,
     PRIMARY KEY (source, object)
 );
@@ -157,12 +159,13 @@ class StateStore:
             )
 
     def record_run_end(self, run_id: str, status: str, rows: int, bytes_: int,
-                       throughput: float, duration: float) -> None:
+                       throughput: float, duration: float,
+                       effective_workers: float = 0.0) -> None:
         with self._conn() as c:
             c.execute(
                 "UPDATE runs SET end_time=?,status=?,total_rows=?,total_bytes=?,"
-                "avg_throughput=?,duration_seconds=? WHERE run_id=?",
-                (_now(), status, rows, bytes_, throughput, duration, run_id),
+                "avg_throughput=?,duration_seconds=?,effective_workers=? WHERE run_id=?",
+                (_now(), status, rows, bytes_, throughput, duration, effective_workers, run_id),
             )
 
     def get_recent_runs(self, source: str, obj: str, limit: int = 10) -> list[dict]:
@@ -219,11 +222,13 @@ class StateStore:
                 return None
             return ControllerState(
                 current_workers=r["current_workers"],
+                previous_workers=r["previous_workers"],
+                previous_avg_throughput=r["previous_avg_throughput"],
+                converged=bool(r["converged"]),
                 last_throughput=r["last_throughput"],
                 last_worker_count=r["last_worker_count"],
                 direction=ControllerDecision(r["direction"]),
                 consecutive_holds=r["consecutive_holds"],
-                converged=bool(r["converged"]),
             )
 
     def save_controller_state(self, source: str, obj: str, st: ControllerState) -> None:
@@ -231,8 +236,9 @@ class StateStore:
             c.execute(
                 "INSERT INTO controller_state "
                 "(source,object,current_workers,last_throughput,last_worker_count,"
-                "direction,consecutive_holds,converged,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?) "
+                "direction,consecutive_holds,converged,"
+                "previous_workers,previous_avg_throughput,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(source,object) DO UPDATE SET "
                 "current_workers=excluded.current_workers,"
                 "last_throughput=excluded.last_throughput,"
@@ -240,10 +246,13 @@ class StateStore:
                 "direction=excluded.direction,"
                 "consecutive_holds=excluded.consecutive_holds,"
                 "converged=excluded.converged,"
+                "previous_workers=excluded.previous_workers,"
+                "previous_avg_throughput=excluded.previous_avg_throughput,"
                 "updated_at=excluded.updated_at",
                 (source, obj, st.current_workers, st.last_throughput,
                  st.last_worker_count, st.direction.value,
-                 st.consecutive_holds, int(st.converged), _now()),
+                 st.consecutive_holds, int(st.converged),
+                 st.previous_workers, st.previous_avg_throughput, _now()),
             )
 
     # ── Chunk Results ─────────────────────────────────────────────

@@ -1,0 +1,269 @@
+═══════════════════════════════════════════════════════
+  ixtract test suite — 2026-04-08 14:21:46
+═══════════════════════════════════════════════════════
+
+▶ Phase 0 simulation (39 tests)
+─────────────────────────────────────────────────────
+test_bounds_respected (tests.simulation.test_phase0.TestControllerInvariants.test_bounds_respected)
+Worker count stays within [min, max]. ... ok
+test_determinism (tests.simulation.test_phase0.TestControllerInvariants.test_determinism)
+Same inputs → same output. ... ok
+test_step_size_bounded (tests.simulation.test_phase0.TestControllerInvariants.test_step_size_bounded)
+Worker changes are ≤1 per evaluation. ... ok
+test_over_parallel (tests.simulation.test_phase0.TestDeviationAnalyzer.test_over_parallel) ... ok
+test_stable (tests.simulation.test_phase0.TestDeviationAnalyzer.test_stable) ... ok
+test_under_parallel (tests.simulation.test_phase0.TestDeviationAnalyzer.test_under_parallel) ... ok
+test_escape_does_not_fire_on_mild_drops (tests.simulation.test_phase0.TestEscapeMode.test_escape_does_not_fire_on_mild_drops)
+Drops below 15% per-run threshold should not trigger escape. ... ok
+test_escape_does_not_fire_on_mixed_direction (tests.simulation.test_phase0.TestEscapeMode.test_escape_does_not_fire_on_mixed_direction)
+Mixed direction in last 3 runs should not trigger escape. ... ok
+test_escape_does_not_fire_with_insufficient_total_drop (tests.simulation.test_phase0.TestEscapeMode.test_escape_does_not_fire_with_insufficient_total_drop)
+Per-run drops may each exceed 15% but total must also reach 20%. ... ok
+test_escape_fires_mid_window (tests.simulation.test_phase0.TestEscapeMode.test_escape_fires_mid_window)
+Escape must fire before the full window is collected (mid-window). ... ok
+test_escape_fires_on_severe_consecutive_drops (tests.simulation.test_phase0.TestEscapeMode.test_escape_fires_on_severe_consecutive_drops)
+3 runs each dropping >=15% and total >=20% should trigger escape. ... ok
+test_escape_respects_max_workers_bound (tests.simulation.test_phase0.TestEscapeMode.test_escape_respects_max_workers_bound)
+Escape at max_workers should HOLD, not exceed bounds. ... ok
+test_normal_mode_unaffected_by_escape_params (tests.simulation.test_phase0.TestEscapeMode.test_normal_mode_unaffected_by_escape_params)
+Normal noise should still HOLD — escape params don't lower the bar. ... ok
+test_frozen (tests.simulation.test_phase0.TestExecutionPlan.test_frozen) ... ok
+test_serialization_roundtrip (tests.simulation.test_phase0.TestExecutionPlan.test_serialization_roundtrip) ... ok
+test_validation_min_chunks (tests.simulation.test_phase0.TestExecutionPlan.test_validation_min_chunks) ... ok
+test_validation_worker_bounds (tests.simulation.test_phase0.TestExecutionPlan.test_validation_worker_bounds) ... ok
+test_basic_creation (tests.simulation.test_phase0.TestIntentModel.test_basic_creation) ... ok
+test_hash_deterministic (tests.simulation.test_phase0.TestIntentModel.test_hash_deterministic) ... ok
+test_incremental_requires_key (tests.simulation.test_phase0.TestIntentModel.test_incremental_requires_key) ... ok
+test_incremental_with_key_valid (tests.simulation.test_phase0.TestIntentModel.test_incremental_with_key_valid) ... ok
+test_source_object_key (tests.simulation.test_phase0.TestIntentModel.test_source_object_key) ... ok
+test_converges (tests.simulation.test_phase0.TestScenario1_HappyPathConvergence.test_converges) ... ok
+test_stays_near_start (tests.simulation.test_phase0.TestScenario1_HappyPathConvergence.test_stays_near_start)
+With low noise, profiler-seeded start should hold without exploring. ... ok
+test_reverts_or_holds (tests.simulation.test_phase0.TestScenario2_OverParallelRecovery.test_reverts_or_holds) ... ok
+test_no_increase_on_spike (tests.simulation.test_phase0.TestScenario3_LatencySpike.test_no_increase_on_spike) ... ok
+test_skew_detectable (tests.simulation.test_phase0.TestScenario4_DataSkew.test_skew_detectable) ... ok
+test_rows_grow (tests.simulation.test_phase0.TestScenario5_GrowthDetection.test_rows_grow) ... ok
+test_converges_under_noise (tests.simulation.test_phase0.TestScenario6_OscillationResistance.test_converges_under_noise) ... ok
+test_no_oscillation (tests.simulation.test_phase0.TestScenario6_OscillationResistance.test_no_oscillation)
+With noise, controller should hold — no direction changes. ... ok
+test_controller_roundtrip (tests.simulation.test_phase0.TestStateStore.test_controller_roundtrip) ... ok
+test_controller_upsert (tests.simulation.test_phase0.TestStateStore.test_controller_upsert) ... ok
+test_heuristic_missing (tests.simulation.test_phase0.TestStateStore.test_heuristic_missing) ... ok
+test_heuristic_upsert (tests.simulation.test_phase0.TestStateStore.test_heuristic_upsert) ... ok
+test_run_recording (tests.simulation.test_phase0.TestStateStore.test_run_recording) ... ok
+test_accepts_good_change (tests.simulation.test_phase0.TestWindowBasedController.test_accepts_good_change)
+After worker change, if new avg is same or better, accept and converge. ... ok
+test_acts_on_sustained_degradation (tests.simulation.test_phase0.TestWindowBasedController.test_acts_on_sustained_degradation)
+Consistent downward trend + significant magnitude should trigger INCREASE. ... ok
+test_configurable_window_size (tests.simulation.test_phase0.TestWindowBasedController.test_configurable_window_size)
+Window size should be configurable. ... ok
+test_converged_breaks_on_severe_regression (tests.simulation.test_phase0.TestWindowBasedController.test_converged_breaks_on_severe_regression)
+Sustained regression >30% should break convergence. ... ok
+test_converged_holds_on_noise (tests.simulation.test_phase0.TestWindowBasedController.test_converged_holds_on_noise)
+Once converged, noisy throughput should stay converged. ... ok
+test_converges_on_full_stable_window (tests.simulation.test_phase0.TestWindowBasedController.test_converges_on_full_stable_window)
+Full stable window should converge. ... ok
+test_does_not_act_on_mild_decline (tests.simulation.test_phase0.TestWindowBasedController.test_does_not_act_on_mild_decline)
+Consistent direction but magnitude < threshold should HOLD. ... ok
+test_empty_window_holds (tests.simulation.test_phase0.TestWindowBasedController.test_empty_window_holds)
+Empty window (first run) should HOLD. ... ok
+test_holds_until_window_full (tests.simulation.test_phase0.TestWindowBasedController.test_holds_until_window_full)
+Controller should HOLD while collecting data (window not full). ... ok
+test_no_action_on_noisy_window (tests.simulation.test_phase0.TestWindowBasedController.test_no_action_on_noisy_window)
+Mixed direction deltas should HOLD, not explore. ... ok
+test_reverts_after_bad_change (tests.simulation.test_phase0.TestWindowBasedController.test_reverts_after_bad_change)
+After worker change, if new avg is worse, should revert. ... ok
+
+----------------------------------------------------------------------
+Ran 46 tests in 0.011s
+
+OK
+  ✅ PASSED
+
+▶ Hardening simulation (17 tests)
+─────────────────────────────────────────────────────
+test_consistent_across_seeds (tests.simulation.test_hardening.TestPhase1_BaselineValidation.test_consistent_across_seeds)
+Convergence behavior must be consistent, not seed-dependent. ... ok
+test_converges_within_early_runs (tests.simulation.test_hardening.TestPhase1_BaselineValidation.test_converges_within_early_runs)
+System must converge well before the 500-run window closes. ... ok
+test_hold_correctness_under_noise (tests.simulation.test_hardening.TestPhase1_BaselineValidation.test_hold_correctness_under_noise)
+Natural ±13% variance must not trigger spurious worker changes. ... ok
+test_majority_of_runs_near_optimal (tests.simulation.test_hardening.TestPhase1_BaselineValidation.test_majority_of_runs_near_optimal)
+After convergence, most runs should be at or near optimal workers. ... ok
+test_no_oscillation_after_convergence (tests.simulation.test_hardening.TestPhase1_BaselineValidation.test_no_oscillation_after_convergence)
+Once converged, worker count must remain stable. ... ok
+test_exploration_discipline_across_curves (tests.simulation.test_hardening.TestPhase2_RobustnessValidation.test_exploration_discipline_across_curves)
+All concurrency curve shapes must converge and hold stable. ... ok
+test_no_late_stage_oscillation (tests.simulation.test_hardening.TestPhase2_RobustnessValidation.test_no_late_stage_oscillation)
+No worker changes should occur after run 100 in stable conditions. ... ok
+test_throughput_cv_acceptable_post_convergence (tests.simulation.test_hardening.TestPhase2_RobustnessValidation.test_throughput_cv_acceptable_post_convergence)
+Throughput coefficient of variation after convergence must be within noise band. ... ok
+test_total_worker_changes_bounded_over_2000_runs (tests.simulation.test_hardening.TestPhase2_RobustnessValidation.test_total_worker_changes_bounded_over_2000_runs)
+Total worker changes must be minimal over a long run. ... ok
+test_worker_distribution_stays_stable_over_2000_runs (tests.simulation.test_hardening.TestPhase2_RobustnessValidation.test_worker_distribution_stays_stable_over_2000_runs)
+Worker count must remain concentrated near optimal across 2000 runs. ... ok
+test_ambiguous_degradation_correctly_holds (tests.simulation.test_hardening.TestPhase3_StressAndDrift.test_ambiguous_degradation_correctly_holds)
+A 20% degradation within 13% noise band must HOLD — it is ambiguous. ... ok
+test_detects_sustained_degradation (tests.simulation.test_hardening.TestPhase3_StressAndDrift.test_detects_sustained_degradation)
+Sustained 40% throughput drop must trigger the regression detector. ... ok
+test_escape_fires_correctly_under_severe_degradation_not_noise (tests.simulation.test_hardening.TestPhase3_StressAndDrift.test_escape_fires_correctly_under_severe_degradation_not_noise)
+Escape must fire for severe degradation but not for normal noise. ... ok
+test_escape_fires_on_severe_crash (tests.simulation.test_hardening.TestPhase3_StressAndDrift.test_escape_fires_on_severe_crash)
+A severe crash (3 consecutive drops ≥15%) must trigger escape mode. ... ok
+test_high_noise_environment_does_not_misfire_escape (tests.simulation.test_hardening.TestPhase3_StressAndDrift.test_high_noise_environment_does_not_misfire_escape)
+Under high variance (±15%), escape must not fire on legitimate noise. ... ok
+test_no_oscillation_during_stable_baseline (tests.simulation.test_hardening.TestPhase3_StressAndDrift.test_no_oscillation_during_stable_baseline)
+During the baseline phase (before any drift), controller must stay settled. ... ok
+test_reconverges_after_recovery (tests.simulation.test_hardening.TestPhase3_StressAndDrift.test_reconverges_after_recovery)
+System must re-stabilize after environment returns to baseline. ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 0.271s
+
+OK
+
+Phase 1 — Convergence:
+  Runs:           500
+  Converged:      True (run 5)
+  Oscillations:   0 (post-convergence)
+  Worker changes: 0 total
+  False positives:0
+  Escape fires:   0
+  Worker dist:    {2: 500}
+  Near-optimal:   100.0%
+  Throughput CV:  0.077 (post-convergence)
+
+Phase 1 — Worker distribution:
+  Runs:           500
+  Converged:      True (run 5)
+  Oscillations:   0 (post-convergence)
+  Worker changes: 0 total
+  False positives:0
+  Escape fires:   0
+  Worker dist:    {2: 500}
+  Near-optimal:   100.0%
+  Throughput CV:  0.077 (post-convergence)
+
+Phase 2 — Long-run stability:
+  Runs:           2000
+  Converged:      True (run 5)
+  Oscillations:   0 (post-convergence)
+  Worker changes: 0 total
+  False positives:0
+  Escape fires:   0
+  Worker dist:    {2: 2000}
+  Near-optimal:   100.0%
+  Throughput CV:  0.076 (post-convergence)
+
+Phase 3 — Degradation detection:
+  Runs:           400
+  Converged:      True (run 5)
+  Oscillations:   0 (post-convergence)
+  Worker changes: 0 total
+  False positives:0
+  Escape fires:   0
+  Worker dist:    {2: 400}
+  Near-optimal:   100.0%
+  Throughput CV:  0.255 (post-convergence)
+
+Phase 3 — Escape mode:
+  Runs:           50
+  Converged:      True (run 5)
+  Oscillations:   0 (post-convergence)
+  Worker changes: 0 total
+  False positives:0
+  Escape fires:   0
+  Worker dist:    {2: 50}
+  Near-optimal:   100.0%
+  Throughput CV:  0.074 (post-convergence)
+
+Phase 3 — High noise:
+  Runs:           500
+  Converged:      True (run 5)
+  Oscillations:   0 (post-convergence)
+  Worker changes: 0 total
+  False positives:0
+  Escape fires:   0
+  Worker dist:    {2: 500}
+  Near-optimal:   100.0%
+  Throughput CV:  0.088 (post-convergence)
+
+Phase 3 — Re-convergence:
+  Runs:           600
+  Converged:      True (run 5)
+  Oscillations:   0 (post-convergence)
+  Worker changes: 0 total
+  False positives:0
+  Escape fires:   0
+  Worker dist:    {2: 600}
+  Near-optimal:   100.0%
+  Throughput CV:  0.113 (post-convergence)
+  ✅ PASSED
+
+▶ Checking test database...
+  ✓ Database available
+
+▶ Integration — PostgreSQL (12 tests)
+─────────────────────────────────────────────────────
+test_execute_orders_range_chunking (tests.integration.test_pipeline.TestExecution.test_execute_orders_range_chunking)
+Full pipeline on orders: range chunking with multiple workers. ... ok
+test_execute_small_table (tests.integration.test_pipeline.TestExecution.test_execute_small_table)
+Full pipeline on small_lookup: profile → plan → execute → verify. ... ok
+test_idempotent_retry (tests.integration.test_pipeline.TestExecution.test_idempotent_retry)
+Executing the same plan twice should produce identical output. ... ok
+test_three_runs_convergence (tests.integration.test_pipeline.TestMultiRunConvergence.test_three_runs_convergence)
+Run 3 extractions and verify controller adjusts correctly. ... ok
+test_plan_orders_range_chunking (tests.integration.test_pipeline.TestPlanner.test_plan_orders_range_chunking)
+Orders table should get range_chunking with multiple chunks. ... ok
+test_plan_respects_max_workers (tests.integration.test_pipeline.TestPlanner.test_plan_respects_max_workers)
+Intent max_workers constraint should cap worker count. ... ok
+test_plan_small_single_pass (tests.integration.test_pipeline.TestPlanner.test_plan_small_single_pass)
+Small table should get single_pass with 1 chunk. ... ok
+test_connections_available (tests.integration.test_pipeline.TestProfiler.test_connections_available)
+Connector should report available connections. ... ok
+test_profile_events_detects_skew (tests.integration.test_pipeline.TestProfiler.test_profile_events_detects_skew)
+Profile the skewed events table. CV should be elevated. ... ok
+test_profile_orders (tests.integration.test_pipeline.TestProfiler.test_profile_orders)
+Profile the uniform orders table. ... ok
+test_profile_small_table (tests.integration.test_pipeline.TestProfiler.test_profile_small_table)
+Small table should recommend single_pass. ... ok
+test_full_pipeline_records_state (tests.integration.test_pipeline.TestStateStoreIntegration.test_full_pipeline_records_state)
+Execute and verify all state store tables are populated. ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 9.661s
+
+OK
+
+  orders: 1,200,000 rows, 4 chunks, 5.7s, 212,284 rows/sec
+
+  small_lookup: 500 rows, 0.0s, 175235 rows/sec
+
+  Convergence test: 3 runs on small_lookup
+  Run  Workers   Throughput    Decision
+    1        1     193,718        hold
+    2        1     225,297        hold
+    3        1     226,724        hold
+  Final state: 1 workers, converged=False
+
+  Plan: range_chunking, 4 chunks, 2 workers, est. 5s
+
+  Events: 1,999,884 rows, CV=0.00
+
+  Profile: 1,200,000 rows, PK 1→1200000, CV=0.00, latency p50=0ms, recommended=2 workers
+
+  State store verified: run=rx-20260408-142156-31053d, chunks=1, controller_workers=1, profile stored
+  ✅ PASSED
+
+═══════════════════════════════════════════════════════
+  Results: 3 suite(s) passed, 0 suite(s) failed
+  Elapsed: 10s
+═══════════════════════════════════════════════════════
+
+  ✅ All suites passed. Ready to commit v0.2.0.
+
+  Next steps:
+    git add -A
+    git commit -m 'feat: Phase 2A complete + escape mode + battle-hardening'
+    git tag -a v0.2.0 -m 'Phase 2A: Statistical controller + visibility'
+    git push && git push --tags

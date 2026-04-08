@@ -426,8 +426,15 @@ class TestStateStoreIntegration(unittest.TestCase):
 
         # Record controller state
         controller = ParallelismController()
-        ctrl_state = ControllerState.cold_start(controller.config)
-        ctrl_out = controller.evaluate(result.avg_throughput, ctrl_state)
+        ctrl_state = ControllerState.from_profiler(plan.worker_count)
+        all_recent = store.get_recent_runs("postgresql", "small_lookup",
+                                           limit=controller.config.window_size + 5)
+        throughput_window = [
+            r["avg_throughput"] for r in reversed(all_recent)
+            if r.get("worker_count") == ctrl_state.current_workers
+               and r.get("avg_throughput", 0) > 0
+        ][-controller.config.window_size:]
+        ctrl_out = controller.evaluate(throughput_window, ctrl_state)
         store.save_controller_state("postgresql", "small_lookup", ctrl_out.new_state)
 
         # Save profile
@@ -526,8 +533,15 @@ class TestMultiRunConvergence(unittest.TestCase):
 
             # Controller
             if ctrl_state is None:
-                ctrl_state = ControllerState.cold_start(controller.config)
-            ctrl_out = controller.evaluate(result.avg_throughput, ctrl_state)
+                ctrl_state = ControllerState.from_profiler(plan.worker_count)
+            all_recent = store.get_recent_runs("postgresql", "small_lookup",
+                                               limit=controller.config.window_size + 5)
+            throughput_window = [
+                r["avg_throughput"] for r in reversed(all_recent)
+                if r.get("worker_count") == ctrl_state.current_workers
+                   and r.get("avg_throughput", 0) > 0
+            ][-controller.config.window_size:]
+            ctrl_out = controller.evaluate(throughput_window, ctrl_state)
             store.save_controller_state("postgresql", "small_lookup", ctrl_out.new_state)
             store.set_heuristic("postgresql", "small_lookup", "throughput_baseline", result.avg_throughput)
 
