@@ -167,12 +167,15 @@ class StateStore:
     # ── Runs ──────────────────────────────────────────────────────
 
     def record_run_start(self, run_id: str, plan_id: str, intent_hash: str,
-                         source: str, obj: str, strategy: str, workers: int) -> None:
+                         source: str, obj: str, strategy: str, workers: int,
+                         context_json: str = "{}") -> None:
         with self._conn() as c:
             c.execute(
-                "INSERT INTO runs (run_id,plan_id,intent_hash,source,object,strategy,worker_count,start_time) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (run_id, plan_id, intent_hash, source, obj, strategy, workers, _now()),
+                "INSERT INTO runs (run_id,plan_id,intent_hash,source,object,strategy,"
+                "worker_count,start_time,execution_context_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (run_id, plan_id, intent_hash, source, obj, strategy, workers,
+                 _now(), context_json),
             )
 
     def record_run_end(self, run_id: str, status: str, rows: int, bytes_: int,
@@ -192,6 +195,54 @@ class StateStore:
                 (source, obj, limit),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def get_running_count(self, source: str, exclude_run_id: Optional[str] = None) -> int:
+        """Count extractions currently running on this source.
+
+        Used by context measurement to determine concurrent extraction count.
+        Excludes the calling run itself (exclude_run_id) to avoid self-counting.
+        """
+        with self._conn() as c:
+            if exclude_run_id:
+                row = c.execute(
+                    "SELECT COUNT(*) FROM runs WHERE source=? AND status='running' "
+                    "AND run_id != ?",
+                    (source, exclude_run_id),
+                ).fetchone()
+            else:
+                row = c.execute(
+                    "SELECT COUNT(*) FROM runs WHERE source=? AND status='running'",
+                    (source,),
+                ).fetchone()
+            return row[0] if row else 0
+
+    def get_runs_with_context(
+        self,
+        source: str,
+        obj: str,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Return recent completed runs with their execution context.
+
+        Used by the context-weighted estimator to find similar historical runs.
+        Returns only successful runs with avg_throughput > 0.
+        Ordered oldest-first so EWMA computation gets correct time ordering.
+
+        Returns fields: run_id, avg_throughput, execution_context_json, total_rows,
+                        worker_count, start_time.
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT run_id, avg_throughput, execution_context_json, "
+                "total_rows, worker_count, start_time "
+                "FROM runs "
+                "WHERE source=? AND object=? AND status='success' "
+                "AND avg_throughput > 0 "
+                "ORDER BY start_time DESC LIMIT ?",
+                (source, obj, limit),
+            ).fetchall()
+        # Return oldest-first for EWMA (reversed from the DESC query)
+        return list(reversed([dict(r) for r in rows]))
 
     # ── Deviations ────────────────────────────────────────────────
 

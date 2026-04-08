@@ -117,7 +117,16 @@ def plan(object_name, host, port, database, user, password, connection_string,
         store = StateStore(state_db)
         ctrl_state = store.get_controller_state("postgresql", object_name)
 
-        exec_plan, worker_source = plan_extraction(intent, prof, store, ctrl_state)
+        # Measure context (same logic as execute — planner receives it, not measures it)
+        from ixtract.context import measure_context, format_context_summary
+        ctx = measure_context(
+            connector=connector, store=store, object_name=object_name,
+            row_estimate=prof.row_estimate, source="postgresql",
+        )
+
+        exec_plan, worker_source, tp_estimate = plan_extraction(
+            intent, prof, store, ctrl_state, context=ctx
+        )
         summary = format_plan_summary(exec_plan, prof, ctrl_state, worker_source=worker_source)
         click.echo(f"\n{summary}")
 
@@ -135,15 +144,14 @@ def plan(object_name, host, port, database, user, password, connection_string,
                 click.echo(f"  Intent cap:    {max_workers}")
             click.echo(f"  \u2192 Result:      {exec_plan.worker_count} workers")
 
-            # ── Estimation reasoning ─────────────────────────────
-            baseline = store.get_heuristic("postgresql", object_name, "throughput_baseline")
-            click.echo(f"\nEstimation:")
-            if baseline and baseline > 0:
-                click.echo(f"  Throughput:    {baseline:,.0f} rows/sec (from stored baseline)")
-                click.echo(f"  Confidence:    high (based on actual previous runs)")
-            else:
-                click.echo(f"  Throughput:    {exec_plan.cost_estimate.predicted_throughput_rows_sec:,.0f} rows/sec (estimated from profiler)")
-                click.echo(f"  Confidence:    low (no historical data, first run)")
+            # ── Context ───────────────────────────────────────────
+            click.echo(f"\nExecution Context:")
+            click.echo(format_context_summary(ctx))
+
+            # ── Context-weighted estimation ───────────────────────
+            from ixtract.context.estimator import format_estimate_for_cli
+            click.echo(f"\nThroughput Estimation:")
+            click.echo(format_estimate_for_cli(tp_estimate))
             click.echo(f"  Est. rows:     {exec_plan.cost_estimate.predicted_total_rows:,}")
             click.echo(f"  Est. duration: {_fmt_duration(exec_plan.cost_estimate.predicted_duration_seconds)}")
 
@@ -223,12 +231,21 @@ def execute(object_name, host, port, database, user, password, connection_string
             constraints=ExtractionConstraints(max_workers=max_workers),
         )
 
-        # 3. Controller state
+        # 4. Controller state
         ctrl_state = store.get_controller_state("postgresql", object_name)
         controller = ParallelismController(ControllerConfig(window_size=window_size))
 
-        # 4. Plan
-        exec_plan, worker_source = plan_extraction(intent, prof, store, ctrl_state)
+        # 5. Measure execution context (once — same logic used at plan and run time)
+        from ixtract.context import measure_context
+        ctx = measure_context(
+            connector=connector, store=store, object_name=object_name,
+            row_estimate=prof.row_estimate, source="postgresql",
+        )
+
+        # 6. Plan
+        exec_plan, worker_source, tp_estimate = plan_extraction(
+            intent, prof, store, ctrl_state, context=ctx
+        )
         click.echo(format_plan_summary(exec_plan, prof, ctrl_state, worker_source=worker_source))
         click.echo()
 
@@ -239,11 +256,12 @@ def execute(object_name, host, port, database, user, password, connection_string
         # 6. Get previous run BEFORE recording current (so we don't find ourselves)
         recent_runs = store.get_recent_runs("postgresql", object_name, limit=1)
 
-        # 7. Record current run
+        # 7. Record current run (with execution context for future similarity matching)
         store.record_run_start(
             result.run_id, exec_plan.plan_id, intent.intent_hash(),
             "postgresql", object_name, exec_plan.strategy.value,
             exec_plan.worker_count,
+            context_json=ctx.to_json(),
         )
         store.record_run_end(
             result.run_id, result.status.lower(),

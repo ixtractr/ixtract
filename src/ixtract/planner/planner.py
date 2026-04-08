@@ -32,17 +32,23 @@ def plan_extraction(
     profile: SourceProfile,
     store: Optional[StateStore] = None,
     controller_state: Optional[ControllerState] = None,
-) -> ExecutionPlan:
-    """Generate an ExecutionPlan from intent + profile + history.
+    context: Optional["ExecutionContext"] = None,
+) -> tuple:
+    """Generate an ExecutionPlan from intent + profile + history + context.
 
     Args:
-        intent: What to extract.
-        profile: Source profile data.
-        store: State store for historical metrics (optional for first run).
+        intent:           What to extract.
+        profile:          Source profile data.
+        store:            State store for historical metrics (optional for first run).
         controller_state: Current controller state (None on first run).
+        context:          Current execution context for similarity matching.
+                          Measured before calling — planner does not observe
+                          the world directly.
 
     Returns:
-        Frozen, immutable ExecutionPlan.
+        (ExecutionPlan, worker_source, ThroughputEstimate) — 3-tuple.
+        worker_source is a label string for CLI display.
+        ThroughputEstimate carries confidence and explainability data.
     """
     # ── Strategy selection ────────────────────────────────────────
     strategy = _select_strategy(profile)
@@ -70,8 +76,9 @@ def plan_extraction(
     # ── Scheduling ────────────────────────────────────────────────
     scheduling = SchedulingStrategy(profile.recommended_scheduling)
 
-    # ── Cost estimation ───────────────────────────────────────────
-    throughput = _estimate_throughput(profile, store, worker_count)
+    # ── Cost estimation (context-weighted) ───────────────────────
+    tp_estimate = _context_weighted_estimate(profile, store, worker_count, context)
+    throughput = tp_estimate.value
     est_duration = profile.row_estimate / max(throughput, 1)
     cost_estimate = CostEstimate(
         predicted_duration_seconds=round(est_duration, 1),
@@ -121,7 +128,7 @@ def plan_extraction(
         cost_estimate=cost_estimate,
         writer_config=writer_config,
         metadata_snapshot=meta_snapshot,
-    ), worker_source
+    ), worker_source, tp_estimate
 
 
 def format_plan_summary(plan: ExecutionPlan, profile: SourceProfile,
@@ -319,40 +326,64 @@ def _range_chunks(profile: SourceProfile, worker_count: int) -> list[ChunkDefini
     )]
 
 
-def _estimate_throughput(
+def _context_weighted_estimate(
     profile: SourceProfile,
     store: Optional[StateStore],
     worker_count: int,
-) -> float:
-    """Estimate throughput from historical data or defaults.
+    context: Optional["ExecutionContext"] = None,
+) -> "ThroughputEstimate":
+    """Context-weighted throughput estimation.
 
-    Phase 1: uses stored baseline from previous runs.
-    Phase 2: adds context-weighted matching.
+    Priority:
+      1. Context-weighted average over similar historical runs (Phase 2B)
+      2. EWMA over all recent runs (no context match or no context supplied)
+      3. Profiler-based cold-start (no run history at all)
+
+    The planner receives context as an input — it does not measure it.
     """
-    # Check for stored baseline from previous runs
-    # Key must match what the CLI stores: source="postgresql", object=object_name
+    from ixtract.context.similarity import score_candidates
+    from ixtract.context.estimator import (
+        estimate_throughput, ThroughputEstimate, _ewma_estimate,
+    )
+
+    def _profiler_fallback() -> float:
+        """Profiler-based throughput estimate — used when no run history."""
+        if profile.latency_p50_ms > 1.0:
+            single_worker_tp = 1000 / profile.latency_p50_ms * 100
+            return min(single_worker_tp * math.sqrt(worker_count), 500_000)
+        if profile.avg_row_bytes > 0 and profile.row_estimate > 0:
+            bytes_per_sec = 25_000_000 * math.sqrt(worker_count)
+            return min(bytes_per_sec / max(profile.avg_row_bytes, 1), 500_000)
+        return DEFAULT_THROUGHPUT
+
+    # Fetch history
+    candidates = []
     if store:
-        baseline = store.get_heuristic(
-            "postgresql", profile.object_name, "throughput_baseline"
+        try:
+            candidates = store.get_runs_with_context(
+                "postgresql", profile.object_name, limit=50
+            )
+        except Exception:
+            candidates = []
+
+    all_throughputs = [
+        r["avg_throughput"] for r in candidates
+        if r.get("avg_throughput", 0) > 0
+    ]
+
+    # Score candidates if we have context
+    if context is not None and candidates:
+        matched, excluded = score_candidates(context, candidates)
+        return estimate_throughput(
+            matched, excluded, all_throughputs, _profiler_fallback()
         )
-        if baseline and baseline > 0:
-            return baseline
 
-    # No history: estimate from profiler data
-    if profile.latency_p50_ms > 1.0:
-        # Measurable latency: estimate throughput from query speed
-        single_worker_tp = 1000 / profile.latency_p50_ms * 100
-        return min(single_worker_tp * math.sqrt(worker_count), 500_000)
+    # No context — EWMA over all recent runs
+    if all_throughputs:
+        return _ewma_estimate([], [], all_throughputs, _profiler_fallback(), 0.0, float("inf"))
 
-    # Sub-millisecond latency (local DB, fast network): use size-based estimate
-    # 25MB/sec per worker is conservative — accounts for serialization + write overhead
-    # (50MB was 2x too optimistic based on real-world measurements: ~218K rows/sec at 2 workers
-    #  on local Docker with 138 bytes/row = ~30MB/sec effective)
-    if profile.avg_row_bytes > 0 and profile.row_estimate > 0:
-        bytes_per_sec = 25_000_000 * math.sqrt(worker_count)
-        return min(bytes_per_sec / max(profile.avg_row_bytes, 1), 500_000)
-
-    return DEFAULT_THROUGHPUT
+    # No history — cold start
+    return estimate_throughput([], [], [], _profiler_fallback())
 
 
 def _check_disk_space(output_path: str, estimated_bytes: int) -> None:
