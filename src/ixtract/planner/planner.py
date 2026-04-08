@@ -47,8 +47,21 @@ def plan_extraction(
     # ── Strategy selection ────────────────────────────────────────
     strategy = _select_strategy(profile)
 
+    # ── Benchmark lookup ──────────────────────────────────────────
+    benchmark = None
+    if store:
+        try:
+            benchmark = store.get_benchmark("postgresql", profile.object_name)
+            # Invalidate stale benchmarks so planner falls back to profiler
+            if benchmark and benchmark.is_stale(profile.row_estimate):
+                benchmark = None
+        except Exception:
+            benchmark = None  # never let benchmark lookup break planning
+
     # ── Worker count resolution ───────────────────────────────────
-    worker_count = _resolve_workers(profile, controller_state, intent)
+    worker_count, worker_source = _resolve_workers(
+        profile, controller_state, intent, benchmark
+    )
     worker_bounds = (1, min(16, profile.available_connections_safe * 2))
 
     # ── Chunk computation ─────────────────────────────────────────
@@ -86,9 +99,6 @@ def plan_extraction(
 
     # ── Retry & writer config ─────────────────────────────────────
     max_retries = 3
-    if intent.constraints.max_workers:
-        worker_count = min(worker_count, intent.constraints.max_workers)
-
     retry_policy = RetryPolicy(max_retries=max_retries)
     writer_config = WriterConfig(
         output_format=intent.target_type.value,
@@ -111,14 +121,20 @@ def plan_extraction(
         cost_estimate=cost_estimate,
         writer_config=writer_config,
         metadata_snapshot=meta_snapshot,
-    )
+    ), worker_source
 
 
 def format_plan_summary(plan: ExecutionPlan, profile: SourceProfile,
-                         controller_state: Optional[ControllerState] = None) -> str:
+                         controller_state: Optional[ControllerState] = None,
+                         worker_source: str = "") -> str:
     """Format plan as CLI summary output."""
-    source_label = "profiler recommended" if controller_state is None else "controller converged"
-    if controller_state and not controller_state.converged:
+    if worker_source:
+        source_label = worker_source
+    elif controller_state is None:
+        source_label = "profiler recommended"
+    elif controller_state.converged:
+        source_label = "controller converged"
+    else:
         source_label = "controller exploring"
 
     est = plan.cost_estimate
@@ -167,27 +183,52 @@ def _resolve_workers(
     profile: SourceProfile,
     controller_state: Optional[ControllerState],
     intent: ExtractionIntent,
-) -> int:
-    """Worker count resolution — conditional, not min().
+    benchmark: Optional["BenchmarkResult"] = None,
+) -> tuple[int, str]:
+    """Worker count resolution — returns (count, source_label).
 
-    First run: profiler_start is the base.
-    Subsequent runs: controller supersedes profiler.
-    Resource caps always apply as safety bounds.
+    Priority order (highest first):
+        1. Benchmark result (if trustworthy and fresh)
+        2. Controller state (if active from prior runs)
+        3. Profiler recommendation (first run, no benchmark)
+
+    Resource caps always apply as safety bounds after source selection.
+
+    Returns:
+        (worker_count, source_label) — label for CLI display.
     """
-    # Base: profiler or controller
-    if controller_state is not None and controller_state.last_throughput > 0:
-        # Subsequent run — controller is active
-        base = controller_state.current_workers
-    else:
-        # First run — profiler provides starting point
-        base = profile.recommended_start_workers
+    from ixtract.benchmarker import planner_workers_from_benchmark
 
-    # Safety caps
+    # ── Priority 1: Benchmark ─────────────────────────────────────
+    if benchmark is not None:
+        try:
+            base = planner_workers_from_benchmark(benchmark)
+            if benchmark.signal_strength <= 0.30:
+                label = "benchmarked (conservative)"
+            else:
+                label = "benchmarked"
+        except ValueError:
+            # Low confidence — fall through to lower priorities
+            benchmark = None
+
+    # ── Priority 2: Controller ────────────────────────────────────
+    if benchmark is None:
+        if controller_state is not None and controller_state.last_throughput > 0:
+            base = controller_state.current_workers
+            label = ("controller converged" if controller_state.converged
+                     else "controller exploring")
+        else:
+            # ── Priority 3: Profiler ──────────────────────────────
+            base = profile.recommended_start_workers
+            label = "profiler recommended"
+
+    # ── Safety caps ───────────────────────────────────────────────
     source_cap = profile.available_connections_safe
     system_cap = os.cpu_count() or 4
     intent_cap = intent.constraints.max_workers or 64
 
-    return max(1, min(base, source_cap, system_cap, intent_cap))
+    count = max(1, min(base, source_cap, system_cap, intent_cap))
+    return count, label
 
 
 def _compute_chunks(

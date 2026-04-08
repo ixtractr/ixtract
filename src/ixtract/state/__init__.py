@@ -121,6 +121,23 @@ CREATE INDEX IF NOT EXISTS idx_runs_so ON runs(source, object);
 CREATE INDEX IF NOT EXISTS idx_dev_run ON deviations(run_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_run ON chunks(run_id);
 CREATE INDEX IF NOT EXISTS idx_worker_run ON worker_metrics(run_id);
+
+CREATE TABLE IF NOT EXISTS benchmarks (
+    source              TEXT NOT NULL,
+    object              TEXT NOT NULL,
+    benchmarked_at      TEXT NOT NULL,
+    probe_rows          INTEGER NOT NULL,
+    ranges_used         INTEGER NOT NULL,
+    worker_grid         TEXT NOT NULL,    -- JSON array e.g. [1,2,4]
+    throughput_json     TEXT NOT NULL,    -- JSON dict {"1": 118400, "2": 224800, ...}
+    optimal_workers     INTEGER NOT NULL,
+    confidence          REAL NOT NULL,
+    signal_strength     REAL NOT NULL,
+    curve_shape         TEXT NOT NULL,
+    row_estimate        INTEGER NOT NULL,
+    result_json         TEXT NOT NULL,   -- full BenchmarkResult.to_dict() for round-trip
+    PRIMARY KEY (source, object)
+);
 """
 
 
@@ -323,6 +340,62 @@ class StateStore:
                 (source, obj),
             ).fetchone()
             return dict(r) if r else None
+
+
+    # ── Benchmarks ────────────────────────────────────────────────
+
+    def save_benchmark(self, source: str, obj: str, result: "BenchmarkResult") -> None:
+        """Persist a BenchmarkResult. Upserts on (source, object)."""
+        from ixtract.benchmarker import BenchmarkResult
+        import json
+        d = result.to_dict()
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO benchmarks "
+                "(source,object,benchmarked_at,probe_rows,ranges_used,worker_grid,"
+                "throughput_json,optimal_workers,confidence,signal_strength,"
+                "curve_shape,row_estimate,result_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(source,object) DO UPDATE SET "
+                "benchmarked_at=excluded.benchmarked_at,"
+                "probe_rows=excluded.probe_rows,"
+                "ranges_used=excluded.ranges_used,"
+                "worker_grid=excluded.worker_grid,"
+                "throughput_json=excluded.throughput_json,"
+                "optimal_workers=excluded.optimal_workers,"
+                "confidence=excluded.confidence,"
+                "signal_strength=excluded.signal_strength,"
+                "curve_shape=excluded.curve_shape,"
+                "row_estimate=excluded.row_estimate,"
+                "result_json=excluded.result_json",
+                (
+                    source, obj,
+                    d["benchmarked_at"],
+                    d["probe_rows"],
+                    d["ranges_used"],
+                    json.dumps(d["worker_grid"]),
+                    json.dumps(d["throughput_by_workers"]),
+                    d["optimal_workers"],
+                    d["confidence"],
+                    d["signal_strength"],
+                    d["curve_shape"],
+                    d["row_estimate_at_benchmark"],
+                    json.dumps(d),
+                ),
+            )
+
+    def get_benchmark(self, source: str, obj: str) -> "Optional[BenchmarkResult]":
+        """Load a BenchmarkResult from the state store, or None if absent."""
+        from ixtract.benchmarker import BenchmarkResult
+        import json
+        with self._conn() as c:
+            r = c.execute(
+                "SELECT result_json FROM benchmarks WHERE source=? AND object=?",
+                (source, obj),
+            ).fetchone()
+        if not r:
+            return None
+        return BenchmarkResult.from_dict(json.loads(r["result_json"]))
 
 
 def _now() -> str:

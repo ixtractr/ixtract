@@ -1,5 +1,5 @@
 ═══════════════════════════════════════════════════════
-  ixtract test suite — 2026-04-08 14:21:46
+  ixtract test suite — 2026-04-08 17:51:31
 ═══════════════════════════════════════════════════════
 
 ▶ Phase 0 simulation (39 tests)
@@ -75,7 +75,7 @@ test_reverts_after_bad_change (tests.simulation.test_phase0.TestWindowBasedContr
 After worker change, if new avg is worse, should revert. ... ok
 
 ----------------------------------------------------------------------
-Ran 46 tests in 0.011s
+Ran 46 tests in 0.022s
 
 OK
   ✅ PASSED
@@ -118,7 +118,7 @@ test_reconverges_after_recovery (tests.simulation.test_hardening.TestPhase3_Stre
 System must re-stabilize after environment returns to baseline. ... ok
 
 ----------------------------------------------------------------------
-Ran 17 tests in 0.271s
+Ran 17 tests in 0.311s
 
 OK
 
@@ -231,19 +231,19 @@ test_full_pipeline_records_state (tests.integration.test_pipeline.TestStateStore
 Execute and verify all state store tables are populated. ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 9.661s
+Ran 12 tests in 9.081s
 
 OK
 
-  orders: 1,200,000 rows, 4 chunks, 5.7s, 212,284 rows/sec
+  orders: 1,200,000 rows, 4 chunks, 5.3s, 225,295 rows/sec
 
-  small_lookup: 500 rows, 0.0s, 175235 rows/sec
+  small_lookup: 500 rows, 0.0s, 134583 rows/sec
 
   Convergence test: 3 runs on small_lookup
   Run  Workers   Throughput    Decision
-    1        1     193,718        hold
-    2        1     225,297        hold
-    3        1     226,724        hold
+    1        1     183,846        hold
+    2        1     216,340        hold
+    3        1     230,141        hold
   Final state: 1 workers, converged=False
 
   Plan: range_chunking, 4 chunks, 2 workers, est. 5s
@@ -252,7 +252,7 @@ OK
 
   Profile: 1,200,000 rows, PK 1→1200000, CV=0.00, latency p50=0ms, recommended=2 workers
 
-  State store verified: run=rx-20260408-142156-31053d, chunks=1, controller_workers=1, profile stored
+  State store verified: run=rx-20260408-175141-e3bbba, chunks=1, controller_workers=1, profile stored
   ✅ PASSED
 
 ═══════════════════════════════════════════════════════

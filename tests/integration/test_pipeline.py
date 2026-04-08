@@ -136,7 +136,7 @@ class TestPlanner(unittest.TestCase):
             target_config={"output_path": os.path.join(self.tmp, "output")},
         )
 
-        plan = plan_extraction(intent, prof)
+        plan, _ = plan_extraction(intent, prof)
 
         self.assertEqual(plan.strategy.value, "range_chunking")
         self.assertGreater(len(plan.chunks), 1)
@@ -172,7 +172,7 @@ class TestPlanner(unittest.TestCase):
             target_config={"output_path": os.path.join(self.tmp, "output")},
         )
 
-        plan = plan_extraction(intent, prof)
+        plan, _ = plan_extraction(intent, prof)
 
         self.assertEqual(plan.strategy.value, "single_pass")
         self.assertEqual(len(plan.chunks), 1)
@@ -193,7 +193,7 @@ class TestPlanner(unittest.TestCase):
             constraints=ExtractionConstraints(max_workers=2),
         )
 
-        plan = plan_extraction(intent, prof)
+        plan, _ = plan_extraction(intent, prof)
         self.assertLessEqual(plan.worker_count, 2)
 
 
@@ -234,7 +234,7 @@ class TestExecution(unittest.TestCase):
                 "object_name": "small_lookup",
             },
         )
-        plan = plan_extraction(intent, prof)
+        plan, _ = plan_extraction(intent, prof)
 
         # Execute
         engine = ExecutionEngine(self.connector)
@@ -283,7 +283,7 @@ class TestExecution(unittest.TestCase):
             },
             constraints=ExtractionConstraints(max_workers=3),
         )
-        plan = plan_extraction(intent, prof)
+        plan, _ = plan_extraction(intent, prof)
 
         self.assertEqual(plan.strategy.value, "range_chunking")
         self.assertGreater(len(plan.chunks), 1)
@@ -338,7 +338,7 @@ class TestExecution(unittest.TestCase):
             },
         )
 
-        plan = plan_extraction(intent, prof)
+        plan, _ = plan_extraction(intent, prof)
         engine = ExecutionEngine(self.connector)
 
         # First execution
@@ -393,7 +393,7 @@ class TestStateStoreIntegration(unittest.TestCase):
         )
 
         store = StateStore(os.path.join(self.tmp, "state.db"))
-        plan = plan_extraction(intent, prof, store)
+        plan, _ = plan_extraction(intent, prof, store)
 
         # Execute
         engine = ExecutionEngine(self.connector)
@@ -514,7 +514,7 @@ class TestMultiRunConvergence(unittest.TestCase):
             )
 
             ctrl_state = store.get_controller_state("postgresql", "small_lookup")
-            plan = plan_extraction(intent, prof, store, ctrl_state)
+            plan, _ = plan_extraction(intent, prof, store, ctrl_state)
 
             engine = ExecutionEngine(self.connector)
             result = engine.execute(plan, "small_lookup")
