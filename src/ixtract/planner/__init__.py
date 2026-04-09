@@ -70,14 +70,39 @@ class ChunkDefinition:
 
 @dataclass(frozen=True)
 class AdaptiveRule:
-    """Runtime adaptation rule with trigger, action, and hard bounds."""
+    """Runtime adaptation rule with trigger, action, and hard bounds.
+
+    Backoff rule fires only when BOTH guards are satisfied:
+      - relative: query_ms > threshold (ms) — raw latency threshold
+      - absolute: query_ms > absolute_floor_ms — prevents over-triggering on tiny baselines
+
+    E.g. for a p50=1ms DB: threshold=5ms (5×), absolute_floor=50ms → needs both.
+    """
     rule_id: str
     trigger: AdaptiveTrigger
-    threshold: float
+    threshold: float           # primary threshold (e.g. 5× p50 in ms)
     action: AdaptiveAction
     step_size: float = 1.0
-    max_activations: int = 3
-    cooldown_seconds: int = 30
+    max_activations: int = 10
+    cooldown_chunks: int = 3   # chunks to skip before re-evaluating after firing
+    absolute_floor_ms: float = 50.0  # absolute minimum to prevent over-triggering
+    backoff_sleep_base: float = 2.0  # base seconds for sleep (doubles each activation)
+
+
+@dataclass(frozen=True)
+class RuleFiredRecord:
+    """Record of a single adaptive rule firing during execution."""
+    rule_id: str
+    activations: int           # total times fired this run
+    total_chunks: int          # total chunks processed (for rate calculation)
+    max_consecutive: int       # longest consecutive activation streak
+    confidence_impact: str     # "note" | "moderate" | "low"
+
+    @property
+    def activation_rate(self) -> float:
+        if self.total_chunks == 0:
+            return 0.0
+        return self.activations / self.total_chunks
 
 
 @dataclass(frozen=True)

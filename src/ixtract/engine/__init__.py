@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ixtract.connectors.postgresql import PostgreSQLConnector
-from ixtract.planner import ExecutionPlan, ChunkDefinition, ChunkType, Strategy
+from ixtract.planner import ExecutionPlan, ChunkDefinition, ChunkType, Strategy, AdaptiveRule, AdaptiveTrigger, AdaptiveAction, RuleFiredRecord
 from ixtract.writers.parquet import ParquetWriter, BaseWriter
 from ixtract.diagnosis import RunMetrics
 
@@ -48,9 +48,11 @@ class ExecutionResult:
     duration_seconds: float
     avg_throughput: float
     worker_count: int
-    effective_workers: float
+    effective_workers: float       # computed from chunk timing — average concurrent active workers
     chunk_results: list[ChunkResult]
     metrics: Optional[RunMetrics] = None
+    adaptive_rules_fired: list["RuleFiredRecord"] = field(default_factory=list)
+    confidence_flag: str = "full"  # "full" | "moderate" | "low"
 
 
 class ExecutionEngine:
@@ -161,8 +163,77 @@ class ExecutionEngine:
             predicted_throughput_rows_sec=plan.cost_estimate.predicted_throughput_rows_sec,
         )
 
+        # ── True effective workers ────────────────────────────────
+        # = sum(chunk execution times) / wall-clock elapsed
+        # = average concurrent active workers over the run duration.
+        # INVARIANT: chunk.duration_seconds captures query+write time only.
+        # Backoff sleeps occur between chunks in _worker_loop and are
+        # intentionally excluded from chunk timing.
+        successful_chunks = [cr for cr in chunk_results if cr.status == "success"]
+        if elapsed > 0 and successful_chunks:
+            effective_workers = sum(
+                cr.duration_seconds for cr in successful_chunks
+            ) / elapsed
+            # Clamp to [1, plan.worker_count] — can't exceed planned, can't be < 1
+            effective_workers = max(1.0, min(float(plan.worker_count), effective_workers))
+        else:
+            effective_workers = float(plan.worker_count)
+
+        # ── Aggregate adaptive rule firings ───────────────────────
+        # Re-scan chunk results to count backoff firings per rule.
+        # Each worker tracked independently; we aggregate here.
+        rules_fired: list[RuleFiredRecord] = []
+        total_chunks = len(chunk_results)
+
+        for rule in plan.adaptive_rules:
+            if rule.trigger != AdaptiveTrigger.SOURCE_LATENCY_SPIKE:
+                continue
+            # Count chunks where latency exceeded threshold (proxy for firings)
+            fired = [
+                cr for cr in successful_chunks
+                if cr.query_ms > rule.threshold and cr.query_ms > rule.absolute_floor_ms
+            ]
+            if not fired:
+                continue
+
+            activations = len(fired)
+            # Max consecutive: count longest streak of fired chunks in order
+            streak = max_streak = 0
+            chunk_ids_fired = {cr.chunk_id for cr in fired}
+            for cr in chunk_results:
+                if cr.chunk_id in chunk_ids_fired:
+                    streak += 1
+                    max_streak = max(max_streak, streak)
+                else:
+                    streak = 0
+
+            rate = activations / max(total_chunks, 1)
+            if rate <= 0.05:
+                confidence_impact = "note"
+            elif rate <= 0.20:
+                confidence_impact = "moderate"
+            else:
+                confidence_impact = "low"
+
+            rules_fired.append(RuleFiredRecord(
+                rule_id=rule.rule_id,
+                activations=activations,
+                total_chunks=total_chunks,
+                max_consecutive=max_streak,
+                confidence_impact=confidence_impact,
+            ))
+
+        # ── Run-level confidence flag ──────────────────────────────
+        if any(r.confidence_impact == "low" for r in rules_fired):
+            confidence_flag = "low"
+        elif any(r.confidence_impact == "moderate" for r in rules_fired):
+            confidence_flag = "moderate"
+        else:
+            confidence_flag = "full"
+
         log.info(f"Run {run_id} {status}: {total_rows:,} rows, "
-                 f"{elapsed:.1f}s, {throughput:,.0f} rows/sec")
+                 f"{elapsed:.1f}s, {throughput:,.0f} rows/sec, "
+                 f"eff_workers={effective_workers:.1f}")
 
         if failed_chunks:
             for fc in failed_chunks:
@@ -176,9 +247,11 @@ class ExecutionEngine:
             duration_seconds=elapsed,
             avg_throughput=throughput,
             worker_count=plan.worker_count,
-            effective_workers=float(plan.worker_count),
+            effective_workers=effective_workers,
             chunk_results=chunk_results,
             metrics=metrics,
+            adaptive_rules_fired=rules_fired,
+            confidence_flag=confidence_flag,
         )
 
     def _worker_loop(
@@ -195,15 +268,30 @@ class ExecutionEngine:
         Each worker opens its own REPEATABLE READ connection for snapshot
         consistency. All chunks processed by this worker see the same
         database state.
+
+        Backoff rule is evaluated BETWEEN chunks — after _execute_chunk
+        returns and before the next chunk is pulled. Sleep time is
+        intentionally excluded from chunk.duration_seconds so effective_workers
+        computation reflects only active execution time.
         """
         results: list[ChunkResult] = []
+
+        # Find backoff rule if present in plan
+        backoff_rule: Optional[AdaptiveRule] = None
+        for rule in plan.adaptive_rules:
+            if rule.trigger == AdaptiveTrigger.SOURCE_LATENCY_SPIKE:
+                backoff_rule = rule
+                break
+
+        # Per-worker backoff state
+        backoff_activations = 0
+        chunks_since_last_fire = 0  # for cooldown tracking
 
         # Open a snapshot-isolated connection for this worker
         try:
             snapshot_conn = self._connector.create_snapshot_connection()
         except Exception as e:
             log.error(f"  Worker {worker_id}: failed to create snapshot connection: {e}")
-            # Fall back to non-snapshot mode
             snapshot_conn = None
 
         try:
@@ -218,6 +306,34 @@ class ExecutionEngine:
                     max_retries, snapshot_conn,
                 )
                 results.append(result)
+                chunks_since_last_fire += 1
+
+                # ── Backoff rule evaluation ─────────────────────────
+                # Fires AFTER chunk completes and BEFORE next chunk pull.
+                # Sleep time is NOT included in chunk.duration_seconds.
+                if (backoff_rule is not None
+                        and result.status == "success"
+                        and backoff_activations < backoff_rule.max_activations
+                        and chunks_since_last_fire > backoff_rule.cooldown_chunks):
+
+                    latency_ms = result.query_ms
+                    relative_breach = latency_ms > backoff_rule.threshold
+                    absolute_breach = latency_ms > backoff_rule.absolute_floor_ms
+
+                    if relative_breach and absolute_breach:
+                        sleep_secs = min(
+                            backoff_rule.backoff_sleep_base ** backoff_activations,
+                            30.0,
+                        )
+                        log.warning(
+                            f"  Worker {worker_id}: source latency spike "
+                            f"({latency_ms:.0f}ms > threshold {backoff_rule.threshold:.0f}ms). "
+                            f"Backoff {sleep_secs:.1f}s before next chunk."
+                        )
+                        time.sleep(sleep_secs)
+                        backoff_activations += 1
+                        chunks_since_last_fire = 0
+
         finally:
             if snapshot_conn:
                 try:

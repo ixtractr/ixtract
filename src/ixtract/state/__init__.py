@@ -32,7 +32,9 @@ CREATE TABLE IF NOT EXISTS runs (
     total_bytes      INTEGER DEFAULT 0,
     avg_throughput   REAL DEFAULT 0.0,
     duration_seconds REAL DEFAULT 0.0,
-    execution_context_json TEXT DEFAULT '{}'
+    execution_context_json TEXT DEFAULT '{}',
+    confidence_flag  TEXT DEFAULT 'full',
+    adaptive_rules_json TEXT DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -180,12 +182,16 @@ class StateStore:
 
     def record_run_end(self, run_id: str, status: str, rows: int, bytes_: int,
                        throughput: float, duration: float,
-                       effective_workers: float = 0.0) -> None:
+                       effective_workers: float = 0.0,
+                       confidence_flag: str = "full",
+                       adaptive_rules_json: str = "[]") -> None:
         with self._conn() as c:
             c.execute(
                 "UPDATE runs SET end_time=?,status=?,total_rows=?,total_bytes=?,"
-                "avg_throughput=?,duration_seconds=?,effective_workers=? WHERE run_id=?",
-                (_now(), status, rows, bytes_, throughput, duration, effective_workers, run_id),
+                "avg_throughput=?,duration_seconds=?,effective_workers=?,"
+                "confidence_flag=?,adaptive_rules_json=? WHERE run_id=?",
+                (_now(), status, rows, bytes_, throughput, duration,
+                 effective_workers, confidence_flag, adaptive_rules_json, run_id),
             )
 
     def get_recent_runs(self, source: str, obj: str, limit: int = 10) -> list[dict]:
@@ -226,22 +232,23 @@ class StateStore:
 
         Used by the context-weighted estimator to find similar historical runs.
         Returns only successful runs with avg_throughput > 0.
+        Excludes low-confidence runs (adaptive rules fired on >20% of chunks)
+        from the controller window — they represent externally constrained runs
+        that would corrupt the learning signal.
         Ordered oldest-first so EWMA computation gets correct time ordering.
-
-        Returns fields: run_id, avg_throughput, execution_context_json, total_rows,
-                        worker_count, start_time.
         """
         with self._conn() as c:
             rows = c.execute(
                 "SELECT run_id, avg_throughput, execution_context_json, "
-                "total_rows, worker_count, start_time "
+                "total_rows, worker_count, effective_workers, start_time, "
+                "confidence_flag "
                 "FROM runs "
                 "WHERE source=? AND object=? AND status='success' "
                 "AND avg_throughput > 0 "
+                "AND confidence_flag != 'low' "
                 "ORDER BY start_time DESC LIMIT ?",
                 (source, obj, limit),
             ).fetchall()
-        # Return oldest-first for EWMA (reversed from the DESC query)
         return list(reversed([dict(r) for r in rows]))
 
     # ── Deviations ────────────────────────────────────────────────

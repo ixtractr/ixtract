@@ -104,7 +104,8 @@ def plan_extraction(
         has_timestamp_column=False,  # detected in Phase 2
     )
 
-    # ── Retry & writer config ─────────────────────────────────────
+    # ── Adaptive rules (intra-run) ────────────────────────────────
+    adaptive_rules = _build_adaptive_rules(profile)
     max_retries = 3
     retry_policy = RetryPolicy(max_retries=max_retries)
     writer_config = WriterConfig(
@@ -123,7 +124,7 @@ def plan_extraction(
         worker_count=worker_count,
         worker_bounds=worker_bounds,
         scheduling=scheduling,
-        adaptive_rules=(),  # Phase 2
+        adaptive_rules=adaptive_rules,
         retry_policy=retry_policy,
         cost_estimate=cost_estimate,
         writer_config=writer_config,
@@ -384,6 +385,43 @@ def _context_weighted_estimate(
 
     # No history — cold start
     return estimate_throughput([], [], [], _profiler_fallback())
+
+
+def _build_adaptive_rules(profile: SourceProfile) -> tuple:
+    """Build intra-run adaptive rules from profiler data.
+
+    Phase 2B: SOURCE_LATENCY_SPIKE backoff rule only.
+    Only created when the profiler measured meaningful latency (>= 1ms p50).
+    For sub-millisecond latency (local DB), no rule is needed — latency
+    spikes would need to be absurdly large to matter.
+
+    Threshold = 5× p50 (relative guard)
+    Floor     = max(50ms, p50 × 10) (absolute guard — prevents over-triggering
+                on tiny baselines, self-calibrates to source speed)
+    """
+    from ixtract.planner import AdaptiveRule, AdaptiveTrigger, AdaptiveAction
+
+    p50 = profile.latency_p50_ms
+    if p50 < 1.0:
+        # Sub-millisecond latency — no meaningful threshold to set
+        return ()
+
+    threshold_ms = p50 * 5.0
+    absolute_floor_ms = max(50.0, p50 * 10.0)
+
+    return (
+        AdaptiveRule(
+            rule_id="source_latency_backoff",
+            trigger=AdaptiveTrigger.SOURCE_LATENCY_SPIKE,
+            threshold=threshold_ms,
+            action=AdaptiveAction.INCREASE_BACKOFF,
+            step_size=1.0,
+            max_activations=10,
+            cooldown_chunks=3,
+            absolute_floor_ms=absolute_floor_ms,
+            backoff_sleep_base=2.0,
+        ),
+    )
 
 
 def _check_disk_space(output_path: str, estimated_bytes: int) -> None:

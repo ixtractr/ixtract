@@ -267,7 +267,14 @@ def execute(object_name, host, port, database, user, password, connection_string
             result.run_id, result.status.lower(),
             result.total_rows, result.total_bytes,
             result.avg_throughput, result.duration_seconds,
-            effective_workers=float(result.worker_count),
+            effective_workers=result.effective_workers,
+            confidence_flag=result.confidence_flag,
+            adaptive_rules_json=__import__("json").dumps([
+                {"rule_id": r.rule_id, "activations": r.activations,
+                 "total_chunks": r.total_chunks, "max_consecutive": r.max_consecutive,
+                 "confidence_impact": r.confidence_impact}
+                for r in result.adaptive_rules_fired
+            ]),
         )
 
         # 7b. Record per-chunk results (for Phase 2 diagnose/metrics commands)
@@ -332,13 +339,17 @@ def execute(object_name, host, port, database, user, password, connection_string
             if ctrl_state is None:
                 ctrl_state = ControllerState.from_profiler(exec_plan.worker_count)
 
-            # Build throughput window: last N runs at the CURRENT worker count
-            # Include the run we just finished (already recorded in state store)
+            # Build throughput window using effective_workers with ±0.75 tolerance.
+            # Uses effective_workers (actual average concurrent active workers) not
+            # planned worker_count — a run at 4 planned workers where 2 were idle
+            # should not be compared against true 4-worker runs.
+            # Tolerance ±0.75 avoids discretization cliffs without requiring rounding.
+            target_workers = float(ctrl_state.current_workers)
             all_recent = store.get_recent_runs("postgresql", object_name,
                                                 limit=window_size + 5)
             throughput_window = [
                 r["avg_throughput"] for r in reversed(all_recent)
-                if r.get("worker_count") == ctrl_state.current_workers
+                if abs(r.get("effective_workers", r.get("worker_count", 0)) - target_workers) <= 0.75
                    and r.get("avg_throughput", 0) > 0
             ][-window_size:]  # take last window_size entries, oldest first
 
@@ -388,6 +399,29 @@ def execute(object_name, host, port, database, user, password, connection_string
                 diag_label += " (confirmed)"
             click.echo(f"Diagnosis: {diag_label}")
             click.echo(f"  {diag.reasoning}")
+
+        # ── Parallelism efficiency ────────────────────────────────
+        eff = result.effective_workers
+        planned = float(result.worker_count)
+        utilisation = eff / planned if planned > 0 else 1.0
+        if abs(eff - planned) > 0.5:
+            click.echo(
+                f"Parallelism: {planned:.0f} planned → "
+                f"{eff:.1f} effective ({utilisation:.0%} utilisation)"
+            )
+
+        # ── Adaptive rules ────────────────────────────────────────
+        for rule_rec in result.adaptive_rules_fired:
+            rate_pct = rule_rec.activation_rate * 100
+            click.echo(
+                f"Adaptive ({rule_rec.rule_id}): "
+                f"triggered {rule_rec.activations}× "
+                f"({rate_pct:.0f}% of chunks) — {rule_rec.confidence_impact}"
+            )
+            if rule_rec.max_consecutive >= 3:
+                click.echo(
+                    f"  ⚠ Sustained: {rule_rec.max_consecutive} consecutive chunks affected"
+                )
 
         if ctrl_out:
             click.echo(f"Next run: {ctrl_out.decision.value} → "

@@ -1,5 +1,5 @@
 ═══════════════════════════════════════════════════════
-  ixtract test suite — 2026-04-08 21:58:53
+  ixtract test suite — 2026-04-09 20:20:33
 ═══════════════════════════════════════════════════════
 
 ▶ Phase 0 simulation (39 tests)
@@ -75,7 +75,7 @@ test_reverts_after_bad_change (tests.simulation.test_phase0.TestWindowBasedContr
 After worker change, if new avg is worse, should revert. ... ok
 
 ----------------------------------------------------------------------
-Ran 46 tests in 0.023s
+Ran 46 tests in 0.021s
 
 OK
   ✅ PASSED
@@ -118,7 +118,7 @@ test_reconverges_after_recovery (tests.simulation.test_hardening.TestPhase3_Stre
 System must re-stabilize after environment returns to baseline. ... ok
 
 ----------------------------------------------------------------------
-Ran 17 tests in 0.318s
+Ran 17 tests in 0.330s
 
 OK
 
@@ -200,6 +200,219 @@ Phase 3 — Re-convergence:
   Throughput CV:  0.113 (post-convergence)
   ✅ PASSED
 
+▶ Benchmarker simulation (49 tests)
+─────────────────────────────────────────────────────
+test_confidence_bounded (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_confidence_bounded) ... ok
+test_force_bypasses_size_guard (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_force_bypasses_size_guard) ... ok
+test_optimal_workers_within_grid (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_optimal_workers_within_grid) ... ok
+test_probe_calls_include_cache_warm (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_probe_calls_include_cache_warm) ... ok
+test_result_covers_full_grid (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_result_covers_full_grid) ... ok
+test_result_serialization_roundtrip (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_result_serialization_roundtrip) ... ok
+test_returns_benchmark_result (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_returns_benchmark_result) ... ok
+test_returns_none_for_single_point_grid (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_returns_none_for_single_point_grid) ... ok
+test_returns_none_for_table_without_pk (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_returns_none_for_table_without_pk) ... ok
+test_signal_strength_at_least_floor (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_signal_strength_at_least_floor) ... ok
+test_skips_small_table_without_force (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_skips_small_table_without_force) ... ok
+test_staleness_by_age (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_staleness_by_age) ... ok
+test_staleness_by_row_growth (tests.simulation.test_benchmarker.TestBenchmarkerRun.test_staleness_by_row_growth) ... ok
+test_increasing (tests.simulation.test_benchmarker.TestClassifyCurveShape.test_increasing) ... ok
+test_non_monotonic (tests.simulation.test_benchmarker.TestClassifyCurveShape.test_non_monotonic) ... ok
+test_plateau (tests.simulation.test_benchmarker.TestClassifyCurveShape.test_plateau) ... ok
+test_single_point_defaults_to_plateau (tests.simulation.test_benchmarker.TestClassifyCurveShape.test_single_point_defaults_to_plateau) ... ok
+test_two_point_increasing (tests.simulation.test_benchmarker.TestClassifyCurveShape.test_two_point_increasing) ... ok
+test_two_point_plateau (tests.simulation.test_benchmarker.TestClassifyCurveShape.test_two_point_plateau) ... ok
+test_confidence_bounded_0_to_1 (tests.simulation.test_benchmarker.TestComputeConfidence.test_confidence_bounded_0_to_1) ... ok
+test_flat_curve_signal_floored (tests.simulation.test_benchmarker.TestComputeConfidence.test_flat_curve_signal_floored) ... ok
+test_high_confidence_stable_plateau (tests.simulation.test_benchmarker.TestComputeConfidence.test_high_confidence_stable_plateau) ... ok
+test_increasing_curve_reduces_confidence (tests.simulation.test_benchmarker.TestComputeConfidence.test_increasing_curve_reduces_confidence) ... ok
+test_low_confidence_noisy_probes (tests.simulation.test_benchmarker.TestComputeConfidence.test_low_confidence_noisy_probes) ... ok
+test_boundary_at_2_5m_rows (tests.simulation.test_benchmarker.TestComputeProbeRows.test_boundary_at_2_5m_rows) ... ok
+test_cap_applied_for_large_table (tests.simulation.test_benchmarker.TestComputeProbeRows.test_cap_applied_for_large_table) ... ok
+test_floor_applied_for_small_table (tests.simulation.test_benchmarker.TestComputeProbeRows.test_floor_applied_for_small_table) ... ok
+test_fraction_used_for_medium_table (tests.simulation.test_benchmarker.TestComputeProbeRows.test_fraction_used_for_medium_table) ... ok
+test_bounded_by_max_workers (tests.simulation.test_benchmarker.TestEffectiveWorkerGrid.test_bounded_by_max_workers) ... ok
+test_bounded_by_max_workers_2 (tests.simulation.test_benchmarker.TestEffectiveWorkerGrid.test_bounded_by_max_workers_2) ... ok
+test_full_grid_within_bounds (tests.simulation.test_benchmarker.TestEffectiveWorkerGrid.test_full_grid_within_bounds) ... ok
+test_min_workers_filter (tests.simulation.test_benchmarker.TestEffectiveWorkerGrid.test_min_workers_filter) ... ok
+test_single_point_grid (tests.simulation.test_benchmarker.TestEffectiveWorkerGrid.test_single_point_grid) ... ok
+test_benchmark_flat_curve_uses_conservative_workers (tests.simulation.test_benchmarker.TestPlannerBenchmarkIntegration.test_benchmark_flat_curve_uses_conservative_workers)
+Flat curve (signal_strength <= 0.30) → conservative worker count. ... ok
+test_benchmark_path_uses_optimal_workers (tests.simulation.test_benchmarker.TestPlannerBenchmarkIntegration.test_benchmark_path_uses_optimal_workers)
+When a valid benchmark exists with high signal, planner uses benchmark path. ... ok
+test_format_plan_summary_shows_benchmark_label (tests.simulation.test_benchmarker.TestPlannerBenchmarkIntegration.test_format_plan_summary_shows_benchmark_label)
+format_plan_summary renders the benchmark source label correctly. ... ok
+test_low_confidence_benchmark_falls_back_to_profiler (tests.simulation.test_benchmarker.TestPlannerBenchmarkIntegration.test_low_confidence_benchmark_falls_back_to_profiler)
+Low confidence benchmark → planner ignores it, uses profiler. ... ok
+test_no_benchmark_uses_profiler (tests.simulation.test_benchmarker.TestPlannerBenchmarkIntegration.test_no_benchmark_uses_profiler)
+No benchmark in store → profiler path. ... ok
+test_stale_benchmark_falls_back_to_profiler (tests.simulation.test_benchmarker.TestPlannerBenchmarkIntegration.test_stale_benchmark_falls_back_to_profiler)
+Stale benchmark (row growth > 20%) → planner ignores it. ... ok
+test_above_threshold_returns_optimal (tests.simulation.test_benchmarker.TestPlannerLogic.test_above_threshold_returns_optimal) ... ok
+test_boundary_signal_at_threshold_is_conservative (tests.simulation.test_benchmarker.TestPlannerLogic.test_boundary_signal_at_threshold_is_conservative) ... ok
+test_conservative_worker_cap (tests.simulation.test_benchmarker.TestPlannerLogic.test_conservative_worker_cap) ... ok
+test_flat_curve_returns_conservative (tests.simulation.test_benchmarker.TestPlannerLogic.test_flat_curve_returns_conservative) ... ok
+test_low_confidence_raises (tests.simulation.test_benchmarker.TestPlannerLogic.test_low_confidence_raises) ... ok
+test_argmax_simple (tests.simulation.test_benchmarker.TestSelectOptimalWorkers.test_argmax_simple) ... ok
+test_clear_winner_no_tiebreak (tests.simulation.test_benchmarker.TestSelectOptimalWorkers.test_clear_winner_no_tiebreak) ... ok
+test_empty_returns_1 (tests.simulation.test_benchmarker.TestSelectOptimalWorkers.test_empty_returns_1) ... ok
+test_single_entry (tests.simulation.test_benchmarker.TestSelectOptimalWorkers.test_single_entry) ... ok
+test_tiebreak_prefers_lower_workers (tests.simulation.test_benchmarker.TestSelectOptimalWorkers.test_tiebreak_prefers_lower_workers) ... ok
+test_fallback_to_two_ranges_for_small_pk_space (tests.simulation.test_benchmarker.TestSelectProbeRanges.test_fallback_to_two_ranges_for_small_pk_space) ... ok
+test_high_range_ends_at_pk_max (tests.simulation.test_benchmarker.TestSelectProbeRanges.test_high_range_ends_at_pk_max) ... ok
+test_low_range_starts_at_pk_min (tests.simulation.test_benchmarker.TestSelectProbeRanges.test_low_range_starts_at_pk_min) ... ok
+test_ranges_are_non_overlapping (tests.simulation.test_benchmarker.TestSelectProbeRanges.test_ranges_are_non_overlapping) ... ok
+test_ranges_within_pk_bounds (tests.simulation.test_benchmarker.TestSelectProbeRanges.test_ranges_within_pk_bounds) ... ok
+test_three_ranges_for_large_pk_space (tests.simulation.test_benchmarker.TestSelectProbeRanges.test_three_ranges_for_large_pk_space) ... ok
+
+----------------------------------------------------------------------
+Ran 55 tests in 0.673s
+
+OK
+  ✅ PASSED
+
+▶ Context simulation (63 tests)
+─────────────────────────────────────────────────────
+test_network_quality_categories (tests.simulation.test_context.TestClassifications.test_network_quality_categories) ... ok
+test_source_load_categories (tests.simulation.test_context.TestClassifications.test_source_load_categories) ... ok
+test_source_load_zero_max (tests.simulation.test_context.TestClassifications.test_source_load_zero_max) ... ok
+test_time_band (tests.simulation.test_context.TestClassifications.test_time_band) ... ok
+test_breakdown_composite_matches_score (tests.simulation.test_context.TestCompositeSimilarity.test_breakdown_composite_matches_score) ... ok
+test_cyclic_time_adjacency_in_composite (tests.simulation.test_context.TestCompositeSimilarity.test_cyclic_time_adjacency_in_composite) ... ok
+test_identical_contexts_score_1 (tests.simulation.test_context.TestCompositeSimilarity.test_identical_contexts_score_1) ... ok
+test_score_bounded_0_to_1 (tests.simulation.test_context.TestCompositeSimilarity.test_score_bounded_0_to_1) ... ok
+test_similar_contexts_score_higher_than_different (tests.simulation.test_context.TestCompositeSimilarity.test_similar_contexts_score_higher_than_different) ... ok
+test_symmetry (tests.simulation.test_context.TestCompositeSimilarity.test_symmetry)
+sim(a, b) == sim(b, a) when effective_weights are identical. ... ok
+test_canonical_phrases_defined_for_all_reasons (tests.simulation.test_context.TestConfidenceReasons.test_canonical_phrases_defined_for_all_reasons)
+Every reason must have a canonical CLI phrase. ... ok
+test_degrading_reasons_are_correctly_classified (tests.simulation.test_context.TestConfidenceReasons.test_degrading_reasons_are_correctly_classified) ... ok
+test_descriptive_reasons_do_not_degrade (tests.simulation.test_context.TestConfidenceReasons.test_descriptive_reasons_do_not_degrade)
+SPARSE_EVIDENCE and WEAK_MATCH must be 'descriptive' — not 'degrading'. ... ok
+test_dominant_match_is_lowest_priority (tests.simulation.test_context.TestConfidenceReasons.test_dominant_match_is_lowest_priority) ... ok
+test_fallback_always_shown_first_when_present (tests.simulation.test_context.TestConfidenceReasons.test_fallback_always_shown_first_when_present)
+FALLBACK_USED must appear first regardless of other reasons. ... ok
+test_fallback_used_is_highest_priority (tests.simulation.test_context.TestConfidenceReasons.test_fallback_used_is_highest_priority) ... ok
+test_format_cli_max_2_reasons (tests.simulation.test_context.TestConfidenceReasons.test_format_cli_max_2_reasons) ... ok
+test_format_cli_single_reason_no_additional (tests.simulation.test_context.TestConfidenceReasons.test_format_cli_single_reason_no_additional) ... ok
+test_reason_categories_cover_all_reasons (tests.simulation.test_context.TestConfidenceReasons.test_reason_categories_cover_all_reasons)
+Every ConfidenceReason must appear in REASON_CATEGORIES. ... ok
+test_concurrency_capped_at_20 (tests.simulation.test_context.TestDimensionSimilarity.test_concurrency_capped_at_20) ... ok
+test_concurrency_decays (tests.simulation.test_context.TestDimensionSimilarity.test_concurrency_decays) ... ok
+test_concurrency_same (tests.simulation.test_context.TestDimensionSimilarity.test_concurrency_same) ... ok
+test_network_adjacent (tests.simulation.test_context.TestDimensionSimilarity.test_network_adjacent) ... ok
+test_network_same (tests.simulation.test_context.TestDimensionSimilarity.test_network_same) ... ok
+test_source_load_adjacent (tests.simulation.test_context.TestDimensionSimilarity.test_source_load_adjacent) ... ok
+test_source_load_far (tests.simulation.test_context.TestDimensionSimilarity.test_source_load_far) ... ok
+test_source_load_same (tests.simulation.test_context.TestDimensionSimilarity.test_source_load_same) ... ok
+test_system_load_none_returns_1 (tests.simulation.test_context.TestDimensionSimilarity.test_system_load_none_returns_1)
+Unavailable system load returns neutral 1.0 (weight will be 0). ... ok
+test_system_load_same (tests.simulation.test_context.TestDimensionSimilarity.test_system_load_same) ... ok
+test_time_band_adjacent (tests.simulation.test_context.TestDimensionSimilarity.test_time_band_adjacent) ... ok
+test_time_band_cyclic_0_and_5 (tests.simulation.test_context.TestDimensionSimilarity.test_time_band_cyclic_0_and_5)
+Band 0 (00-04) and band 5 (20-24) are adjacent. ... ok
+test_time_band_opposite (tests.simulation.test_context.TestDimensionSimilarity.test_time_band_opposite) ... ok
+test_time_band_same (tests.simulation.test_context.TestDimensionSimilarity.test_time_band_same) ... ok
+test_time_band_two_apart (tests.simulation.test_context.TestDimensionSimilarity.test_time_band_two_apart) ... ok
+test_empty_returns_zero (tests.simulation.test_context.TestEWMA.test_empty_returns_zero) ... ok
+test_recency_bias (tests.simulation.test_context.TestEWMA.test_recency_bias) ... ok
+test_single_value (tests.simulation.test_context.TestEWMA.test_single_value) ... ok
+test_clamping_applied_on_outlier (tests.simulation.test_context.TestEstimationPaths.test_clamping_applied_on_outlier) ... ok
+test_cv_not_computed_for_single_match (tests.simulation.test_context.TestEstimationPaths.test_cv_not_computed_for_single_match) ... ok
+test_dominance_downgrades_confidence (tests.simulation.test_context.TestEstimationPaths.test_dominance_downgrades_confidence) ... ok
+test_high_variance_downgrades_confidence (tests.simulation.test_context.TestEstimationPaths.test_high_variance_downgrades_confidence) ... ok
+test_no_history_cold_start (tests.simulation.test_context.TestEstimationPaths.test_no_history_cold_start) ... ok
+test_no_strong_matches_ewma (tests.simulation.test_context.TestEstimationPaths.test_no_strong_matches_ewma) ... ok
+test_single_match_above_threshold_weighted (tests.simulation.test_context.TestEstimationPaths.test_single_match_above_threshold_weighted) ... ok
+test_single_match_below_threshold_ewma (tests.simulation.test_context.TestEstimationPaths.test_single_match_below_threshold_ewma) ... ok
+test_strong_matches_weighted_estimate (tests.simulation.test_context.TestEstimationPaths.test_strong_matches_weighted_estimate) ... ok
+test_effective_weights_stored_in_context (tests.simulation.test_context.TestExecutionContext.test_effective_weights_stored_in_context)
+Weights must be stored — not recomputed at comparison time. ... ok
+test_format_summary_no_crash (tests.simulation.test_context.TestExecutionContext.test_format_summary_no_crash) ... ok
+test_json_round_trip (tests.simulation.test_context.TestExecutionContext.test_json_round_trip) ... ok
+test_round_trip_serialization (tests.simulation.test_context.TestExecutionContext.test_round_trip_serialization) ... ok
+test_schema_version_is_1 (tests.simulation.test_context.TestExecutionContext.test_schema_version_is_1) ... ok
+test_system_load_unavailable_stores_redistribution (tests.simulation.test_context.TestExecutionContext.test_system_load_unavailable_stores_redistribution) ... ok
+test_above_50pct_excluded (tests.simulation.test_context.TestRowGrowthGuard.test_above_50pct_excluded) ... ok
+test_exactly_50pct_not_excluded (tests.simulation.test_context.TestRowGrowthGuard.test_exactly_50pct_not_excluded)
+Boundary is strict (>0.50), so 50% exactly is not excluded. ... ok
+test_same_rows_not_excluded (tests.simulation.test_context.TestRowGrowthGuard.test_same_rows_not_excluded) ... ok
+test_small_growth_not_excluded (tests.simulation.test_context.TestRowGrowthGuard.test_small_growth_not_excluded) ... ok
+test_symmetric (tests.simulation.test_context.TestRowGrowthGuard.test_symmetric)
+row_growth_guard(a, b) == row_growth_guard(b, a). ... ok
+test_zero_rows_not_excluded (tests.simulation.test_context.TestRowGrowthGuard.test_zero_rows_not_excluded) ... ok
+test_no_dimension_exceeds_half (tests.simulation.test_context.TestWeightRedistribution.test_no_dimension_exceeds_half) ... ok
+test_relative_ratios_preserved_after_redistribution (tests.simulation.test_context.TestWeightRedistribution.test_relative_ratios_preserved_after_redistribution) ... ok
+test_with_system_load_sums_to_1 (tests.simulation.test_context.TestWeightRedistribution.test_with_system_load_sums_to_1) ... ok
+test_without_system_load_excludes_dimension (tests.simulation.test_context.TestWeightRedistribution.test_without_system_load_excludes_dimension) ... ok
+test_without_system_load_sums_to_1 (tests.simulation.test_context.TestWeightRedistribution.test_without_system_load_sums_to_1) ... ok
+
+----------------------------------------------------------------------
+Ran 63 tests in 0.002s
+
+OK
+  ✅ PASSED
+
+▶ Adaptive rules (32 tests)
+─────────────────────────────────────────────────────
+test_both_guards_required (tests.simulation.test_adaptive.TestBackoffRuleTrigger.test_both_guards_required)
+Confirms AND semantics — one guard alone is not sufficient. ... ok
+test_fires_when_both_guards_breached (tests.simulation.test_adaptive.TestBackoffRuleTrigger.test_fires_when_both_guards_breached) ... ok
+test_floor_calibration_fast_db (tests.simulation.test_adaptive.TestBackoffRuleTrigger.test_floor_calibration_fast_db)
+For a fast DB (p50=0.5ms), floor should prevent any firing. ... ok
+test_floor_calibration_medium_db (tests.simulation.test_adaptive.TestBackoffRuleTrigger.test_floor_calibration_medium_db)
+For p50=5ms DB: threshold=25ms, floor=50ms. ... ok
+test_floor_calibration_slow_db (tests.simulation.test_adaptive.TestBackoffRuleTrigger.test_floor_calibration_slow_db)
+For p50=30ms DB: threshold=150ms, floor=300ms. ... ok
+test_no_fire_below_absolute_floor (tests.simulation.test_adaptive.TestBackoffRuleTrigger.test_no_fire_below_absolute_floor)
+Prevents over-triggering on fast DBs (p50=1ms, 5×=5ms spike). ... ok
+test_no_fire_below_relative_threshold (tests.simulation.test_adaptive.TestBackoffRuleTrigger.test_no_fire_below_relative_threshold) ... ok
+test_absolute_floor_scales_with_p50 (tests.simulation.test_adaptive.TestBuildAdaptiveRules.test_absolute_floor_scales_with_p50)
+Floor = max(50ms, p50 × 10). ... ok
+test_no_rule_for_exactly_1ms (tests.simulation.test_adaptive.TestBuildAdaptiveRules.test_no_rule_for_exactly_1ms)
+p50 = 1ms threshold is < 1.0 check — exactly 1ms creates a rule. ... ok
+test_no_rule_for_sub_millisecond_latency (tests.simulation.test_adaptive.TestBuildAdaptiveRules.test_no_rule_for_sub_millisecond_latency)
+p50 < 1ms → no rule (latency spikes would need to be absurd). ... ok
+test_rule_created_for_measurable_latency (tests.simulation.test_adaptive.TestBuildAdaptiveRules.test_rule_created_for_measurable_latency)
+p50 > 1ms → backoff rule created. ... ok
+test_rule_has_correct_defaults (tests.simulation.test_adaptive.TestBuildAdaptiveRules.test_rule_has_correct_defaults) ... ok
+test_threshold_is_5x_p50 (tests.simulation.test_adaptive.TestBuildAdaptiveRules.test_threshold_is_5x_p50)
+Relative threshold = 5× p50. ... ok
+test_clamped_to_minimum_1 (tests.simulation.test_adaptive.TestEffectiveWorkers.test_clamped_to_minimum_1)
+effective_workers cannot drop below 1. ... ok
+test_clamped_to_planned_workers (tests.simulation.test_adaptive.TestEffectiveWorkers.test_clamped_to_planned_workers)
+effective_workers cannot exceed planned worker_count. ... ok
+test_idle_workers_reduce_effective (tests.simulation.test_adaptive.TestEffectiveWorkers.test_idle_workers_reduce_effective)
+4 planned workers but 2 idle — effective ≈ 2. ... ok
+test_invariant_sleep_not_in_duration (tests.simulation.test_adaptive.TestEffectiveWorkers.test_invariant_sleep_not_in_duration)
+Sleep between chunks must NOT appear in chunk duration_seconds. ... ok
+test_perfect_utilisation (tests.simulation.test_adaptive.TestEffectiveWorkers.test_perfect_utilisation)
+2 workers, chunks perfectly split — effective ≈ 2. ... ok
+test_single_worker_single_chunk (tests.simulation.test_adaptive.TestEffectiveWorkers.test_single_worker_single_chunk)
+1 worker, 1 chunk — effective = 1. ... ok
+test_above_20pct_is_low (tests.simulation.test_adaptive.TestRuleFiredRecord.test_above_20pct_is_low) ... ok
+test_activation_rate_property (tests.simulation.test_adaptive.TestRuleFiredRecord.test_activation_rate_property) ... ok
+test_activation_rate_zero_chunks (tests.simulation.test_adaptive.TestRuleFiredRecord.test_activation_rate_zero_chunks) ... ok
+test_just_above_5pct_is_moderate (tests.simulation.test_adaptive.TestRuleFiredRecord.test_just_above_5pct_is_moderate) ... ok
+test_low_activation_rate_is_note (tests.simulation.test_adaptive.TestRuleFiredRecord.test_low_activation_rate_is_note) ... ok
+test_max_consecutive_tracked (tests.simulation.test_adaptive.TestRuleFiredRecord.test_max_consecutive_tracked) ... ok
+test_at_boundary (tests.simulation.test_adaptive.TestWindowFilter.test_at_boundary)
+±0.75 is inclusive. ... ok
+test_avoids_rounding_cliff (tests.simulation.test_adaptive.TestWindowFilter.test_avoids_rounding_cliff)
+2.49 and 2.51 both match target=2 — no rounding cliff. ... ok
+test_exact_match (tests.simulation.test_adaptive.TestWindowFilter.test_exact_match) ... ok
+test_fallback_to_worker_count_when_effective_zero (tests.simulation.test_adaptive.TestWindowFilter.test_fallback_to_worker_count_when_effective_zero)
+Pre-Phase-2B runs have effective_workers=0. Fallback to worker_count. ... ok
+test_just_outside_tolerance (tests.simulation.test_adaptive.TestWindowFilter.test_just_outside_tolerance) ... ok
+test_planned_vs_effective_distinction (tests.simulation.test_adaptive.TestWindowFilter.test_planned_vs_effective_distinction)
+A run at 4 planned but 2.1 effective should NOT match target=4. ... ok
+test_within_tolerance (tests.simulation.test_adaptive.TestWindowFilter.test_within_tolerance) ... ok
+
+----------------------------------------------------------------------
+Ran 32 tests in 0.013s
+
+OK
+  ✅ PASSED
+
 ▶ Checking test database...
   ✓ Database available
 
@@ -231,33 +444,33 @@ test_full_pipeline_records_state (tests.integration.test_pipeline.TestStateStore
 Execute and verify all state store tables are populated. ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 9.811s
+Ran 12 tests in 9.858s
 
 OK
 
-  orders: 1,200,000 rows, 4 chunks, 5.2s, 232,244 rows/sec
+  orders: 1,200,000 rows, 4 chunks, 5.1s, 235,851 rows/sec
 
-  small_lookup: 500 rows, 0.0s, 16046 rows/sec
+  small_lookup: 500 rows, 0.0s, 26467 rows/sec
 
   Convergence test: 3 runs on small_lookup
   Run  Workers   Throughput    Decision
-    1        1      27,933        hold
-    2        1      28,875        hold
-    3        1     201,826        hold
+    1        1      28,917        hold
+    2        1      27,404        hold
+    3        1      27,739        hold
   Final state: 1 workers, converged=False
 
-  Plan: range_chunking, 4 chunks, 2 workers, est. 5s
+  Plan: range_chunking, 4 chunks, 2 workers, est. 10s
 
   Events: 1,999,884 rows, CV=0.00
 
   Profile: 1,200,000 rows, PK 1→1200000, CV=0.00, latency p50=0ms, recommended=2 workers
 
-  State store verified: run=rx-20260408-215904-f1b9a5, chunks=1, controller_workers=1, profile stored
+  State store verified: run=rx-20260409-202046-d76385, chunks=1, controller_workers=1, profile stored
   ✅ PASSED
 
 ═══════════════════════════════════════════════════════
-  Results: 3 suite(s) passed, 0 suite(s) failed
-  Elapsed: 11s
+  Results: 6 suite(s) passed, 0 suite(s) failed
+  Elapsed: 13s
 ═══════════════════════════════════════════════════════
 
   ✅ All suites passed. Ready to commit v0.2.0.

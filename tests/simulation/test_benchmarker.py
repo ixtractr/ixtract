@@ -448,7 +448,7 @@ class TestPlannerBenchmarkIntegration(unittest.TestCase):
 
             prof = _make_profile(size_bytes=300 * 1024 * 1024)
             intent = self._make_intent(tmp)
-            plan, source = plan_extraction(intent, prof, store=store)
+            plan, source, _ = plan_extraction(intent, prof, store=store)
 
             # Label proves the benchmark path was taken
             self.assertEqual(source, "benchmarked")
@@ -469,7 +469,7 @@ class TestPlannerBenchmarkIntegration(unittest.TestCase):
 
             prof = _make_profile(size_bytes=300 * 1024 * 1024)
             intent = self._make_intent(tmp)
-            plan, source = plan_extraction(intent, prof, store=store)
+            plan, source, _ = plan_extraction(intent, prof, store=store)
 
             self.assertEqual(source, "benchmarked (conservative)")
             self.assertLessEqual(plan.worker_count, 2)
@@ -488,7 +488,7 @@ class TestPlannerBenchmarkIntegration(unittest.TestCase):
 
             prof = _make_profile(size_bytes=300 * 1024 * 1024)
             intent = self._make_intent(tmp)
-            plan, source = plan_extraction(intent, prof, store=store)
+            plan, source, _ = plan_extraction(intent, prof, store=store)
 
             self.assertEqual(source, "profiler recommended")
             self.assertNotEqual(plan.worker_count, 8)
@@ -504,7 +504,7 @@ class TestPlannerBenchmarkIntegration(unittest.TestCase):
 
             prof = _make_profile()
             intent = self._make_intent(tmp)
-            plan, source = plan_extraction(intent, prof, store=store)
+            plan, source, _ = plan_extraction(intent, prof, store=store)
 
             self.assertEqual(source, "profiler recommended")
 
@@ -537,7 +537,7 @@ class TestPlannerBenchmarkIntegration(unittest.TestCase):
             # Profile shows 1.5M rows (87% growth from 800K → stale)
             prof = _make_profile(row_estimate=1_500_000, size_bytes=300 * 1024 * 1024)
             intent = self._make_intent(tmp)
-            plan, source = plan_extraction(intent, prof, store=store)
+            plan, source, _ = plan_extraction(intent, prof, store=store)
 
             self.assertEqual(source, "profiler recommended")
 
@@ -554,7 +554,7 @@ class TestPlannerBenchmarkIntegration(unittest.TestCase):
 
             prof = _make_profile(size_bytes=300 * 1024 * 1024)
             intent = self._make_intent(tmp)
-            plan, source = plan_extraction(intent, prof, store=store)
+            plan, source, _ = plan_extraction(intent, prof, store=store)
 
             summary = format_plan_summary(plan, prof, worker_source=source)
             self.assertIn("benchmarked", summary)
