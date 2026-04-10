@@ -1,5 +1,5 @@
 ═══════════════════════════════════════════════════════
-  ixtract test suite — 2026-04-10 21:57:52
+  ixtract test suite — 2026-04-10 22:30:16
 ═══════════════════════════════════════════════════════
 
 ▶ Phase 0 simulation (39 tests)
@@ -75,7 +75,7 @@ test_reverts_after_bad_change (tests.simulation.test_phase0.TestWindowBasedContr
 After worker change, if new avg is worse, should revert. ... ok
 
 ----------------------------------------------------------------------
-Ran 46 tests in 0.010s
+Ran 46 tests in 0.011s
 
 OK
   ✅ PASSED
@@ -118,7 +118,7 @@ test_reconverges_after_recovery (tests.simulation.test_hardening.TestPhase3_Stre
 System must re-stabilize after environment returns to baseline. ... ok
 
 ----------------------------------------------------------------------
-Ran 17 tests in 0.194s
+Ran 17 tests in 0.162s
 
 OK
 
@@ -265,7 +265,7 @@ test_ranges_within_pk_bounds (tests.simulation.test_benchmarker.TestSelectProbeR
 test_three_ranges_for_large_pk_space (tests.simulation.test_benchmarker.TestSelectProbeRanges.test_three_ranges_for_large_pk_space) ... ok
 
 ----------------------------------------------------------------------
-Ran 55 tests in 0.722s
+Ran 55 tests in 0.655s
 
 OK
   ✅ PASSED
@@ -408,7 +408,7 @@ A run at 4 planned but 2.1 effective should NOT match target=4. ... ok
 test_within_tolerance (tests.simulation.test_adaptive.TestWindowFilter.test_within_tolerance) ... ok
 
 ----------------------------------------------------------------------
-Ran 32 tests in 0.031s
+Ran 32 tests in 0.064s
 
 OK
   ✅ PASSED
@@ -453,7 +453,7 @@ test_concurrent_independent_writers (tests.simulation.test_csv_writer.TestThread
 Two writers running concurrently in separate threads produce correct output. ... ok
 
 ----------------------------------------------------------------------
-Ran 21 tests in 0.015s
+Ran 21 tests in 0.025s
 
 OK
   ✅ PASSED
@@ -505,7 +505,57 @@ test_low_cv_recommends_round_robin (tests.simulation.test_work_stealing.TestProf
 CV <= 1.0 → profiler recommends round_robin. ... ok
 
 ----------------------------------------------------------------------
-Ran 24 tests in 0.004s
+Ran 24 tests in 0.002s
+
+OK
+  ✅ PASSED
+
+▶ Manifests (33 tests)
+─────────────────────────────────────────────────────
+test_failed_chunks_excluded_from_files (tests.simulation.test_manifest.TestBuildManifest.test_failed_chunks_excluded_from_files)
+Failed chunks produce no output file — must not appear in manifest. ... ok
+test_file_checksums_computed (tests.simulation.test_manifest.TestBuildManifest.test_file_checksums_computed)
+Each file entry has a valid SHA-256 checksum. ... ok
+test_manifest_id_is_unique (tests.simulation.test_manifest.TestBuildManifest.test_manifest_id_is_unique) ... ok
+test_manifest_written_for_failed_run (tests.simulation.test_manifest.TestBuildManifest.test_manifest_written_for_failed_run)
+Failed runs must still produce a manifest (diagnostic artifact). ... ok
+test_schema_hash_is_populated (tests.simulation.test_manifest.TestBuildManifest.test_schema_hash_is_populated) ... ok
+test_schema_is_null (tests.simulation.test_manifest.TestBuildManifest.test_schema_is_null) ... ok
+test_source_field_format (tests.simulation.test_manifest.TestBuildManifest.test_source_field_format) ... ok
+test_successful_run_status_complete (tests.simulation.test_manifest.TestBuildManifest.test_successful_run_status_complete) ... ok
+test_different_files_different_checksums (tests.simulation.test_manifest.TestComputeFileChecksum.test_different_files_different_checksums) ... ok
+test_empty_file_has_known_checksum (tests.simulation.test_manifest.TestComputeFileChecksum.test_empty_file_has_known_checksum) ... ok
+test_large_file_chunks_correctly (tests.simulation.test_manifest.TestComputeFileChecksum.test_large_file_chunks_correctly)
+Files larger than the 64KB read buffer are hashed correctly. ... ok
+test_sha256_matches_stdlib (tests.simulation.test_manifest.TestComputeFileChecksum.test_sha256_matches_stdlib)
+compute_file_checksum must match hashlib.sha256 directly. ... ok
+test_different_avg_row_bytes_different_hash (tests.simulation.test_manifest.TestComputeSchemaHash.test_different_avg_row_bytes_different_hash) ... ok
+test_different_column_count_different_hash (tests.simulation.test_manifest.TestComputeSchemaHash.test_different_column_count_different_hash) ... ok
+test_different_pk_different_hash (tests.simulation.test_manifest.TestComputeSchemaHash.test_different_pk_different_hash) ... ok
+test_hash_is_sha256_length (tests.simulation.test_manifest.TestComputeSchemaHash.test_hash_is_sha256_length) ... ok
+test_none_pk_handled_gracefully (tests.simulation.test_manifest.TestComputeSchemaHash.test_none_pk_handled_gracefully) ... ok
+test_same_inputs_same_hash (tests.simulation.test_manifest.TestComputeSchemaHash.test_same_inputs_same_hash) ... ok
+test_deferred_fields_null (tests.simulation.test_manifest.TestExtractionManifest.test_deferred_fields_null)
+extraction_window and freshness are null until implemented. ... ok
+test_file_count_property (tests.simulation.test_manifest.TestExtractionManifest.test_file_count_property) ... ok
+test_json_round_trip (tests.simulation.test_manifest.TestExtractionManifest.test_json_round_trip) ... ok
+test_schema_is_null (tests.simulation.test_manifest.TestExtractionManifest.test_schema_is_null)
+Schema field must be null in Phase 2C — not faked. ... ok
+test_status_complete (tests.simulation.test_manifest.TestExtractionManifest.test_status_complete) ... ok
+test_status_failed (tests.simulation.test_manifest.TestExtractionManifest.test_status_failed) ... ok
+test_to_json_is_valid_json (tests.simulation.test_manifest.TestExtractionManifest.test_to_json_is_valid_json) ... ok
+test_all_fields_present (tests.simulation.test_manifest.TestManifestFile.test_all_fields_present) ... ok
+test_to_dict_round_trip (tests.simulation.test_manifest.TestManifestFile.test_to_dict_round_trip) ... ok
+test_atomic_write_no_temp_files_remaining (tests.simulation.test_manifest.TestWriteAndLoadManifest.test_atomic_write_no_temp_files_remaining) ... ok
+test_failed_manifest_is_valid_json (tests.simulation.test_manifest.TestWriteAndLoadManifest.test_failed_manifest_is_valid_json) ... ok
+test_load_manifest_returns_none_if_absent (tests.simulation.test_manifest.TestWriteAndLoadManifest.test_load_manifest_returns_none_if_absent) ... ok
+test_load_manifest_round_trip (tests.simulation.test_manifest.TestWriteAndLoadManifest.test_load_manifest_round_trip) ... ok
+test_write_creates_output_dir (tests.simulation.test_manifest.TestWriteAndLoadManifest.test_write_creates_output_dir)
+write_manifest creates output_path if it doesn't exist. ... ok
+test_written_to_manifest_json (tests.simulation.test_manifest.TestWriteAndLoadManifest.test_written_to_manifest_json) ... ok
+
+----------------------------------------------------------------------
+Ran 33 tests in 0.006s
 
 OK
   ✅ PASSED
@@ -541,19 +591,19 @@ test_full_pipeline_records_state (tests.integration.test_pipeline.TestStateStore
 Execute and verify all state store tables are populated. ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 9.735s
+Ran 12 tests in 8.891s
 
 OK
 
-  orders: 1,200,000 rows, 4 chunks, 5.4s, 224,033 rows/sec
+  orders: 1,200,000 rows, 4 chunks, 5.0s, 239,441 rows/sec
 
-  small_lookup: 500 rows, 0.0s, 154682 rows/sec
+  small_lookup: 500 rows, 0.0s, 174925 rows/sec
 
   Convergence test: 3 runs on small_lookup
   Run  Workers   Throughput    Decision
-    1        1     203,144        hold
-    2        1     223,219        hold
-    3        1     222,469        hold
+    1        1      92,468        hold
+    2        1     218,111        hold
+    3        1     234,666        hold
   Final state: 1 workers, converged=False
 
   Plan: range_chunking, 4 chunks, 2 workers, est. 5s
@@ -562,12 +612,12 @@ OK
 
   Profile: 1,200,000 rows, PK 1→1200000, CV=0.00, latency p50=0ms, recommended=2 workers
 
-  State store verified: run=rx-20260410-215804-e0c04a, chunks=1, controller_workers=1, profile stored
+  State store verified: run=rx-20260410-223027-789cce, chunks=1, controller_workers=1, profile stored
   ✅ PASSED
 
 ═══════════════════════════════════════════════════════
-  Results: 8 suite(s) passed, 0 suite(s) failed
-  Elapsed: 12s
+  Results: 9 suite(s) passed, 0 suite(s) failed
+  Elapsed: 11s
 ═══════════════════════════════════════════════════════
 
   ✅ All suites passed. Ready to commit v0.2.0.

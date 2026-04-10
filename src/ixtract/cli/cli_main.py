@@ -314,7 +314,24 @@ def execute(object_name, host, port, database, user, password, connection_string
             ]),
         )
 
-        # 7b. Record per-chunk results (for Phase 2 diagnose/metrics commands)
+        # 7b. Write extraction manifest (always — even for failed runs)
+        from ixtract.manifest import build_manifest, write_manifest
+        manifest = build_manifest(
+            run_id=result.run_id,
+            source_type="postgresql",
+            object_name=object_name,
+            status=result.status.lower(),
+            chunk_results=result.chunk_results,
+            total_rows=result.total_rows,
+            total_bytes=result.total_bytes,
+            column_count=prof.column_count,
+            primary_key=prof.primary_key,
+            primary_key_type=prof.primary_key_type,
+            avg_row_bytes=prof.avg_row_bytes,
+        )
+        manifest_path = write_manifest(manifest, output)
+
+        # 7c. Record per-chunk results (for Phase 2 diagnose/metrics commands)
         for cr in result.chunk_results:
             store.record_chunk(
                 result.run_id, cr.chunk_id, cr.worker_id,
@@ -473,6 +490,10 @@ def execute(object_name, host, port, database, user, password, connection_string
             click.echo(f"\nRetry: ixtract execute {object_name} --database {database}")
             click.echo(f"  Retry is safe: writer uses atomic finalize, no duplicates.")
             click.echo(f"  To allow partial success: add --allow-partial-failures 5%")
+
+        click.echo(f"Manifest: {manifest_path}  |  "
+                   f"{manifest.file_count} file(s)  |  "
+                   f"status={manifest.status}")
 
         click.echo(f"{'='*60}")
 
