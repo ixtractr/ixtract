@@ -22,12 +22,48 @@ class FinalizeResult:
 
 
 class BaseWriter(ABC):
+    """Abstract writer interface — open/write_batch/finalize/abort.
+
+    Thread-safety invariant:
+        Writer instances are NOT shared between workers. Each worker creates
+        its own writer instance per chunk. Workers share only the chunk queue
+        and the snapshot connection — never the writer. Implementations may
+        assume single-threaded access.
+
+    File visibility invariant:
+        Output is invisible at its final path until finalize() succeeds.
+        abort() removes all partial state. Re-execution: abort() then restart
+        from scratch. No duplicates possible.
+
+    Deferred (Phase 3):
+        - File rotation / size-based splitting
+        - Partitioned output
+        - Compressed archives
+    """
+
     @abstractmethod
-    def open(self, config: dict[str, Any], chunk_id: str, columns: list[str]) -> None: ...
+    def open(
+        self,
+        config: dict[str, Any],
+        chunk_id: str,
+        schema: Optional[list[dict[str, str]]] = None,
+    ) -> None:
+        """Open writer for a single chunk.
+
+        Args:
+            config:   Writer configuration (output_path, compression, etc.)
+            chunk_id: Unique chunk identifier used in output filename.
+            schema:   Optional column schema [{name: str, type: str}, ...].
+                      If None, schema is inferred from first write_batch call.
+        """
+        ...
+
     @abstractmethod
     def write_batch(self, batch: list[dict[str, Any]]) -> WriteResult: ...
+
     @abstractmethod
     def finalize(self) -> FinalizeResult: ...
+
     @abstractmethod
     def abort(self) -> None: ...
 
@@ -42,7 +78,13 @@ class ParquetWriter(BaseWriter):
         self._total_rows = 0
         self._compression = "snappy"
 
-    def open(self, config: dict[str, Any], chunk_id: str, columns: list[str]) -> None:
+    def open(
+        self,
+        config: dict[str, Any],
+        chunk_id: str,
+        schema: Optional[list[dict[str, str]]] = None,
+    ) -> None:
+        """Open writer. schema is accepted but Parquet infers types from first batch."""
         output_dir = config.get("output_path", "./output")
         os.makedirs(output_dir, exist_ok=True)
 

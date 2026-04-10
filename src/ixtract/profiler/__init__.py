@@ -142,9 +142,23 @@ class SourceProfiler:
         return "single_pass"  # fallback; offset_chunking is Phase 2
 
     def _recommend_scheduling(self, pk_cv: float) -> str:
-        """Profiler-aware scheduling selection from architecture Section 11.2."""
+        """Profiler-aware scheduling selection from architecture Section 11.2.
+
+        Skewed PK distribution → work_stealing (LPT dispatch):
+            Sorts chunks by estimated_rows descending before queue insertion.
+            Largest chunks start first — idle workers naturally pick up
+            remaining large chunks. Proven optimal for identical workers
+            (Longest Processing Time First).
+
+        Uniform PK distribution → round_robin.
+
+        Note: LPT uses estimated_rows from the planner. If PK ranges are
+        non-uniform despite a low CV (e.g. sparse inserts), estimates may
+        be imperfect. Dynamic reordering is deferred to Phase 3 to avoid
+        mutable shared state during concurrent execution.
+        """
         if pk_cv > SKEW_CV_THRESHOLD:
-            return "greedy"  # work_stealing is Phase 2
+            return "work_stealing"
         return "round_robin"
 
     def _recommend_start_workers(

@@ -43,11 +43,13 @@ run_suite() {
 }
 
 # ── Simulation suites (no database required) ──────────────────
-run_suite "Phase 0 simulation (39 tests)"   "tests.simulation.test_phase0"
-run_suite "Hardening simulation (17 tests)" "tests.simulation.test_hardening"
+run_suite "Phase 0 simulation (39 tests)"    "tests.simulation.test_phase0"
+run_suite "Hardening simulation (17 tests)"  "tests.simulation.test_hardening"
 run_suite "Benchmarker simulation (49 tests)" "tests.simulation.test_benchmarker"
-run_suite "Context simulation (63 tests)"  "tests.simulation.test_context"
-run_suite "Adaptive rules (32 tests)"      "tests.simulation.test_adaptive"
+run_suite "Context simulation (63 tests)"   "tests.simulation.test_context"
+run_suite "Adaptive rules (32 tests)"       "tests.simulation.test_adaptive"
+run_suite "CSV writer (21 tests)"           "tests.simulation.test_csv_writer"
+run_suite "Work-stealing (24 tests)"        "tests.simulation.test_work_stealing"
 
 # ── Integration suite (requires PostgreSQL) ───────────────────
 log ""

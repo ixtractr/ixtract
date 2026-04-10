@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ixtract.connectors.postgresql import PostgreSQLConnector
-from ixtract.planner import ExecutionPlan, ChunkDefinition, ChunkType, Strategy, AdaptiveRule, AdaptiveTrigger, AdaptiveAction, RuleFiredRecord
+from ixtract.planner import ExecutionPlan, ChunkDefinition, ChunkType, Strategy, SchedulingStrategy, AdaptiveRule, AdaptiveTrigger, AdaptiveAction, RuleFiredRecord
 from ixtract.writers.parquet import ParquetWriter, BaseWriter
 from ixtract.diagnosis import RunMetrics
 
@@ -102,8 +102,25 @@ class ExecutionEngine:
         }
 
         # Build chunk work queue
+        # WORK_STEALING → LPT (Longest Processing Time First):
+        #   Sort chunks by estimated_rows descending before queue insertion.
+        #   Largest chunks are dispatched first — when small chunks finish
+        #   quickly, large chunks are still in flight for other workers.
+        #   On uniform tables (equal estimated_rows), sort is a no-op.
+        #
+        # Note: chunk order in ExecutionPlan.chunks is always PK order
+        # (for reproducibility and explainability). Reordering happens only
+        # at dispatch time and is not persisted. Dynamic reordering mid-run
+        # is deferred to Phase 3 (coordination complexity with shared state).
         chunk_queue: queue.Queue[ChunkDefinition] = queue.Queue()
-        for chunk in plan.chunks:
+        dispatch_chunks = list(plan.chunks)
+        if plan.scheduling == SchedulingStrategy.WORK_STEALING:
+            dispatch_chunks.sort(key=lambda c: c.estimated_rows, reverse=True)
+            log.debug(
+                f"  LPT dispatch: {len(dispatch_chunks)} chunks sorted by estimated_rows "
+                f"[{', '.join(str(c.estimated_rows) for c in dispatch_chunks[:3])}{'...' if len(dispatch_chunks) > 3 else ''}]"
+            )
+        for chunk in dispatch_chunks:
             chunk_queue.put(chunk)
 
         failed = False
@@ -365,7 +382,7 @@ class ExecutionEngine:
                 sql = self._build_chunk_query(object_name, chunk, plan)
 
                 # Open writer
-                writer.open(writer_config, chunk.chunk_id, [])
+                writer.open(writer_config, chunk.chunk_id, schema=None)
 
                 # Extract and write — use snapshot connection if available
                 total_rows = 0

@@ -134,7 +134,8 @@ def plan_extraction(
 
 def format_plan_summary(plan: ExecutionPlan, profile: SourceProfile,
                          controller_state: Optional[ControllerState] = None,
-                         worker_source: str = "") -> str:
+                         worker_source: str = "",
+                         scheduling_source: str = "") -> str:
     """Format plan as CLI summary output."""
     if worker_source:
         source_label = worker_source
@@ -145,6 +146,11 @@ def format_plan_summary(plan: ExecutionPlan, profile: SourceProfile,
     else:
         source_label = "controller exploring"
 
+    # Scheduling label — always shown in summary (not just --standard)
+    if not scheduling_source:
+        sched = plan.scheduling.value
+        scheduling_source = sched
+
     est = plan.cost_estimate
     lines = [
         f"Plan: {profile.object_name}  |  {plan.strategy.value}  |  "
@@ -154,10 +160,21 @@ def format_plan_summary(plan: ExecutionPlan, profile: SourceProfile,
         f"Est. bytes: {_fmt_bytes(est.predicted_total_bytes)}",
         f"Workers: {plan.worker_count} ({source_label}; "
         f"capped by source_slots:{profile.available_connections_safe})",
+        f"Scheduling: {scheduling_source}",
         f"Safety: connections {plan.worker_count}/{profile.max_connections} "
         f"({plan.worker_count*100//profile.max_connections}%) \u2714",
         f"Consistency: snapshot isolation (REPEATABLE READ)",
     ]
+
+    # Warn if work_stealing forced on a uniform table (no effect)
+    from ixtract.planner import SchedulingStrategy
+    if (plan.scheduling == SchedulingStrategy.WORK_STEALING
+            and profile.pk_distribution_cv <= 1.0
+            and "forced" in scheduling_source):
+        lines.append(
+            f"  \u26A0 work_stealing forced but no skew detected "
+            f"(CV={profile.pk_distribution_cv:.2f}). LPT ordering has no effect."
+        )
 
     # Snapshot warning
     if est.predicted_duration_seconds > SNAPSHOT_WARN_MINUTES * 60:

@@ -127,7 +127,15 @@ def plan(object_name, host, port, database, user, password, connection_string,
         exec_plan, worker_source, tp_estimate = plan_extraction(
             intent, prof, store, ctrl_state, context=ctx
         )
-        summary = format_plan_summary(exec_plan, prof, ctrl_state, worker_source=worker_source)
+        # Build scheduling label for plan command (no user override here)
+        from ixtract.planner import SchedulingStrategy
+        if exec_plan.scheduling == SchedulingStrategy.WORK_STEALING:
+            plan_sched_src = f"work_stealing (skew-aware scheduling via LPT, CV={prof.pk_distribution_cv:.2f})"
+        else:
+            plan_sched_src = exec_plan.scheduling.value
+        summary = format_plan_summary(exec_plan, prof, ctrl_state,
+                                       worker_source=worker_source,
+                                       scheduling_source=plan_sched_src)
         click.echo(f"\n{summary}")
 
         if standard:
@@ -187,10 +195,12 @@ def plan(object_name, host, port, database, user, password, connection_string,
 @click.option("--compression", default="snappy")
 @click.option("--max-workers", default=None, type=int)
 @click.option("--window-size", default=5, type=int, help="Controller window size (runs before deciding)")
+@click.option("--scheduling", default="auto", type=click.Choice(["auto", "greedy", "work_stealing"]),
+              help="Chunk dispatch strategy. auto=planner decides, work_stealing=LPT (skew-aware)")
 @click.option("--state-db", default="ixtract_state.db")
 @click.option("-v", "--verbose", is_flag=True)
 def execute(object_name, host, port, database, user, password, connection_string,
-            output, compression, max_workers, window_size, state_db, verbose):
+            output, compression, max_workers, window_size, scheduling, state_db, verbose):
     """Extract data from source to Parquet."""
     _setup_logging(verbose)
 
@@ -246,7 +256,34 @@ def execute(object_name, host, port, database, user, password, connection_string
         exec_plan, worker_source, tp_estimate = plan_extraction(
             intent, prof, store, ctrl_state, context=ctx
         )
-        click.echo(format_plan_summary(exec_plan, prof, ctrl_state, worker_source=worker_source))
+
+        # Apply --scheduling override if user specified (not auto)
+        from ixtract.planner import SchedulingStrategy
+        if scheduling != "auto":
+            scheduling_map = {
+                "greedy":        SchedulingStrategy.GREEDY,
+                "work_stealing": SchedulingStrategy.WORK_STEALING,
+            }
+            forced_strategy = scheduling_map[scheduling]
+            # Rebuild plan with overridden scheduling — ExecutionPlan is frozen,
+            # so we must recreate it. All other fields unchanged.
+            import dataclasses
+            exec_plan = dataclasses.replace(exec_plan, scheduling=forced_strategy)
+            scheduling_source = f"{scheduling} (forced by user)"
+        else:
+            # Auto: show what planner decided and why
+            if exec_plan.scheduling == SchedulingStrategy.WORK_STEALING:
+                scheduling_source = f"work_stealing (skew-aware scheduling via LPT, CV={prof.pk_distribution_cv:.2f})"
+            elif exec_plan.scheduling == SchedulingStrategy.GREEDY:
+                scheduling_source = "greedy"
+            else:
+                scheduling_source = f"{exec_plan.scheduling.value}"
+            # Warn if user forced work_stealing on a uniform table
+            # (handled in format_plan_summary via scheduling_source label)
+
+        click.echo(format_plan_summary(exec_plan, prof, ctrl_state,
+                                       worker_source=worker_source,
+                                       scheduling_source=scheduling_source))
         click.echo()
 
         # 5. Execute
