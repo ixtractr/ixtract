@@ -1,5 +1,5 @@
 ═══════════════════════════════════════════════════════
-  ixtract test suite — 2026-04-10 22:30:16
+  ixtract test suite — 2026-04-11 08:24:54
 ═══════════════════════════════════════════════════════
 
 ▶ Phase 0 simulation (39 tests)
@@ -75,7 +75,7 @@ test_reverts_after_bad_change (tests.simulation.test_phase0.TestWindowBasedContr
 After worker change, if new avg is worse, should revert. ... ok
 
 ----------------------------------------------------------------------
-Ran 46 tests in 0.011s
+Ran 46 tests in 0.015s
 
 OK
   ✅ PASSED
@@ -118,7 +118,7 @@ test_reconverges_after_recovery (tests.simulation.test_hardening.TestPhase3_Stre
 System must re-stabilize after environment returns to baseline. ... ok
 
 ----------------------------------------------------------------------
-Ran 17 tests in 0.162s
+Ran 17 tests in 0.238s
 
 OK
 
@@ -265,7 +265,7 @@ test_ranges_within_pk_bounds (tests.simulation.test_benchmarker.TestSelectProbeR
 test_three_ranges_for_large_pk_space (tests.simulation.test_benchmarker.TestSelectProbeRanges.test_three_ranges_for_large_pk_space) ... ok
 
 ----------------------------------------------------------------------
-Ran 55 tests in 0.655s
+Ran 55 tests in 0.628s
 
 OK
   ✅ PASSED
@@ -408,7 +408,7 @@ A run at 4 planned but 2.1 effective should NOT match target=4. ... ok
 test_within_tolerance (tests.simulation.test_adaptive.TestWindowFilter.test_within_tolerance) ... ok
 
 ----------------------------------------------------------------------
-Ran 32 tests in 0.064s
+Ran 32 tests in 0.007s
 
 OK
   ✅ PASSED
@@ -453,7 +453,7 @@ test_concurrent_independent_writers (tests.simulation.test_csv_writer.TestThread
 Two writers running concurrently in separate threads produce correct output. ... ok
 
 ----------------------------------------------------------------------
-Ran 21 tests in 0.025s
+Ran 21 tests in 0.004s
 
 OK
   ✅ PASSED
@@ -555,7 +555,45 @@ write_manifest creates output_path if it doesn't exist. ... ok
 test_written_to_manifest_json (tests.simulation.test_manifest.TestWriteAndLoadManifest.test_written_to_manifest_json) ... ok
 
 ----------------------------------------------------------------------
-Ran 33 tests in 0.006s
+Ran 33 tests in 0.005s
+
+OK
+  ✅ PASSED
+
+▶ MySQL connector (22 tests)
+─────────────────────────────────────────────────────
+test_context_manager_protocol (tests.simulation.test_mysql_connector.TestBaseConnectorCompliance.test_context_manager_protocol) ... ok
+test_has_all_required_methods (tests.simulation.test_mysql_connector.TestBaseConnectorCompliance.test_has_all_required_methods) ... ok
+test_is_base_connector_subclass (tests.simulation.test_mysql_connector.TestBaseConnectorCompliance.test_is_base_connector_subclass) ... ok
+test_supported_engines_constant (tests.simulation.test_mysql_connector.TestBaseConnectorCompliance.test_supported_engines_constant) ... ok
+test_disposes_engine (tests.simulation.test_mysql_connector.TestClose.test_disposes_engine) ... ok
+test_idempotent (tests.simulation.test_mysql_connector.TestClose.test_idempotent) ... ok
+test_sets_engine_none (tests.simulation.test_mysql_connector.TestClose.test_sets_engine_none) ... ok
+test_connection_string_passed_through (tests.simulation.test_mysql_connector.TestConnect.test_connection_string_passed_through) ... ok
+test_custom_charset (tests.simulation.test_mysql_connector.TestConnect.test_custom_charset) ... ok
+test_custom_pool_size (tests.simulation.test_mysql_connector.TestConnect.test_custom_pool_size) ... ok
+test_default_charset_utf8mb4 (tests.simulation.test_mysql_connector.TestConnect.test_default_charset_utf8mb4) ... ok
+test_default_port_3306 (tests.simulation.test_mysql_connector.TestConnect.test_default_port_3306) ... ok
+test_pool_pre_ping_enabled (tests.simulation.test_mysql_connector.TestConnect.test_pool_pre_ping_enabled) ... ok
+test_require_engine_raises_before_connect (tests.simulation.test_mysql_connector.TestConnect.test_require_engine_raises_before_connect) ... ok
+test_url_from_config_dict (tests.simulation.test_mysql_connector.TestConnect.test_url_from_config_dict) ... ok
+test_consistent_snapshot_is_first_statement (tests.simulation.test_mysql_connector.TestCreateSnapshotConnection.test_consistent_snapshot_is_first_statement)
+CRITICAL: START TRANSACTION WITH CONSISTENT SNAPSHOT must be first. ... ok
+test_docstring_documents_first_statement_invariant (tests.simulation.test_mysql_connector.TestCreateSnapshotConnection.test_docstring_documents_first_statement_invariant) ... ok
+test_no_set_session_before_snapshot (tests.simulation.test_mysql_connector.TestCreateSnapshotConnection.test_no_set_session_before_snapshot)
+SET SESSION must NOT precede START TRANSACTION (resets snapshot). ... ok
+test_returns_connection (tests.simulation.test_mysql_connector.TestCreateSnapshotConnection.test_returns_connection) ... ok
+test_batch_is_list_of_dicts (tests.simulation.test_mysql_connector.TestExtractChunk.test_batch_is_list_of_dicts) ... ok
+test_yields_batches_of_correct_size (tests.simulation.test_mysql_connector.TestExtractChunk.test_yields_batches_of_correct_size) ... ok
+test_parses_show_variables_and_show_status (tests.simulation.test_mysql_connector.TestGetConnections.test_parses_show_variables_and_show_status) ... ok
+test_raises_for_composite_primary_key (tests.simulation.test_mysql_connector.TestMetadataConstraints.test_raises_for_composite_primary_key) ... ok
+test_raises_for_myisam (tests.simulation.test_mysql_connector.TestMetadataConstraints.test_raises_for_myisam) ... ok
+test_raises_for_no_primary_key (tests.simulation.test_mysql_connector.TestMetadataConstraints.test_raises_for_no_primary_key) ... ok
+test_raises_if_table_not_found (tests.simulation.test_mysql_connector.TestMetadataConstraints.test_raises_if_table_not_found) ... ok
+test_successful_metadata_for_innodb_single_pk (tests.simulation.test_mysql_connector.TestMetadataConstraints.test_successful_metadata_for_innodb_single_pk) ... ok
+
+----------------------------------------------------------------------
+Ran 27 tests in 0.019s
 
 OK
   ✅ PASSED
@@ -591,19 +629,19 @@ test_full_pipeline_records_state (tests.integration.test_pipeline.TestStateStore
 Execute and verify all state store tables are populated. ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 8.891s
+Ran 12 tests in 10.170s
 
 OK
 
-  orders: 1,200,000 rows, 4 chunks, 5.0s, 239,441 rows/sec
+  orders: 1,200,000 rows, 4 chunks, 5.5s, 218,116 rows/sec
 
-  small_lookup: 500 rows, 0.0s, 174925 rows/sec
+  small_lookup: 500 rows, 0.0s, 155054 rows/sec
 
   Convergence test: 3 runs on small_lookup
   Run  Workers   Throughput    Decision
-    1        1      92,468        hold
-    2        1     218,111        hold
-    3        1     234,666        hold
+    1        1     208,453        hold
+    2        1     210,484        hold
+    3        1     195,833        hold
   Final state: 1 workers, converged=False
 
   Plan: range_chunking, 4 chunks, 2 workers, est. 5s
@@ -612,12 +650,12 @@ OK
 
   Profile: 1,200,000 rows, PK 1→1200000, CV=0.00, latency p50=0ms, recommended=2 workers
 
-  State store verified: run=rx-20260410-223027-789cce, chunks=1, controller_workers=1, profile stored
+  State store verified: run=rx-20260411-082508-213573, chunks=1, controller_workers=1, profile stored
   ✅ PASSED
 
 ═══════════════════════════════════════════════════════
-  Results: 9 suite(s) passed, 0 suite(s) failed
-  Elapsed: 11s
+  Results: 10 suite(s) passed, 0 suite(s) failed
+  Elapsed: 14s
 ═══════════════════════════════════════════════════════
 
   ✅ All suites passed. Ready to commit v0.2.0.

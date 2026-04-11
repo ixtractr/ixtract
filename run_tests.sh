@@ -51,6 +51,7 @@ run_suite "Adaptive rules (32 tests)"       "tests.simulation.test_adaptive"
 run_suite "CSV writer (21 tests)"           "tests.simulation.test_csv_writer"
 run_suite "Work-stealing (24 tests)"        "tests.simulation.test_work_stealing"
 run_suite "Manifests (33 tests)"            "tests.simulation.test_manifest"
+run_suite "MySQL connector (22 tests)"      "tests.simulation.test_mysql_connector"
 
 # ── Integration suite (requires PostgreSQL) ───────────────────
 log ""
