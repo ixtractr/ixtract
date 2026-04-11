@@ -22,6 +22,28 @@ from ixtract.diagnosis import RunMetrics
 log = logging.getLogger("ixtract.engine")
 
 
+def _create_writer(config: dict) -> "BaseWriter":
+    """Create writer instance based on output_format in config.
+
+    Supports: parquet (default), csv, s3, gcs.
+    S3/GCS writers buffer locally then upload on finalize().
+    """
+    fmt = config.get("output_format", "parquet")
+
+    if fmt == "csv":
+        from ixtract.writers.csv_writer import CSVWriter
+        return CSVWriter()
+    elif fmt == "s3":
+        from ixtract.writers.s3_writer import S3Writer
+        return S3Writer()
+    elif fmt == "gcs":
+        from ixtract.writers.gcs_writer import GCSWriter
+        return GCSWriter()
+    else:
+        # Default: parquet (covers "parquet" and any unrecognized format)
+        return ParquetWriter()
+
+
 @dataclass
 class ChunkResult:
     """Result of executing a single chunk."""
@@ -95,6 +117,7 @@ class ExecutionEngine:
         chunk_results: list[ChunkResult] = []
         writer_config = {
             "output_path": plan.writer_config.output_path,
+            "output_format": plan.writer_config.output_format,
             "compression": plan.writer_config.compression,
             "naming_pattern": plan.writer_config.naming_pattern,
             "object_name": object_name,
@@ -374,7 +397,7 @@ class ExecutionEngine:
         last_error = ""
 
         for attempt in range(max_retries + 1):
-            writer = ParquetWriter()
+            writer = _create_writer(writer_config)
             try:
                 start = time.perf_counter()
 

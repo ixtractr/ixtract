@@ -113,6 +113,11 @@ def _create_connector(intent: ExtractionIntent):
         connector = MySQLConnector()
         connector.connect(intent.source_config)
         return connector
+    elif intent.source_type == SourceType.SQLSERVER:
+        from ixtract.connectors.sqlserver import SQLServerConnector
+        connector = SQLServerConnector()
+        connector.connect(intent.source_config)
+        return connector
     else:
         raise ValidationError(f"Unsupported source type: {intent.source_type}")
 

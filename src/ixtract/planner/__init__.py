@@ -129,6 +129,7 @@ class WriterConfig:
     partition_by: Optional[str] = None
     naming_pattern: str = "{object}_{chunk_id}.{format}"
     temp_path: str = "./output"  # should match output_path; writer uses output dir for atomic rename
+    max_file_size_bytes: Optional[int] = None  # Phase 3C: rotation threshold, None = no rotation
 
 
 @dataclass(frozen=True)
