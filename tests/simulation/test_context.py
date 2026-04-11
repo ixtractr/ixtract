@@ -365,26 +365,33 @@ class TestEstimationPaths(unittest.TestCase):
             make_scored_run("b", 0.84, 236_000),
             make_scored_run("c", 0.71, 209_000),
         ]
-        est = estimate_throughput(matched, [], [224_000, 236_000, 209_000], 0)
-        self.assertEqual(est.method, "context_weighted")
+        est = estimate_throughput(matched, [], [224_000, 236_000, 209_000], 0,
+                                  runs_with_context=10)
+        self.assertEqual(est.method, "blended")
+        self.assertGreater(est.blend_weight, 0.7)  # strong match + deep history
         self.assertEqual(est.confidence.level, "high")
 
     def test_single_match_above_threshold_weighted(self):
         matched = [make_scored_run("d", 0.70, 220_000)]
-        est = estimate_throughput(matched, [], [220_000], 0)
-        self.assertEqual(est.method, "context_weighted")
+        est = estimate_throughput(matched, [], [220_000], 0, runs_with_context=10)
+        self.assertEqual(est.method, "blended")
+        self.assertGreater(est.blend_weight, 0.5)
         self.assertEqual(est.confidence.level, "low")
         self.assertIn(ConfidenceReason.SPARSE_EVIDENCE, est.confidence.reasons)
 
-    def test_single_match_below_threshold_ewma(self):
+    def test_single_match_below_threshold_blended_low_alpha(self):
         matched = [make_scored_run("e", 0.55, 220_000)]
-        est = estimate_throughput(matched, [], [200_000, 210_000, 220_000], 0)
-        self.assertEqual(est.method, "ewma")
+        est = estimate_throughput(matched, [], [200_000, 210_000, 220_000], 0,
+                                  runs_with_context=10)
+        self.assertEqual(est.method, "blended")
+        self.assertLessEqual(est.blend_weight, 0.6)  # weak match → low α
 
-    def test_no_strong_matches_ewma(self):
+    def test_no_strong_matches_blended_low_alpha(self):
         matched = [make_scored_run("f", 0.35, 220_000), make_scored_run("g", 0.28, 210_000)]
-        est = estimate_throughput(matched, [], [220_000, 210_000], 0)
-        self.assertEqual(est.method, "ewma")
+        est = estimate_throughput(matched, [], [220_000, 210_000], 0,
+                                  runs_with_context=10)
+        self.assertEqual(est.method, "blended")
+        self.assertLessEqual(est.blend_weight, 0.4)  # weak matches → EWMA dominates
 
     def test_no_history_cold_start(self):
         est = estimate_throughput([], [], [], 50_000.0)
@@ -394,10 +401,11 @@ class TestEstimationPaths(unittest.TestCase):
         self.assertIn(ConfidenceReason.FALLBACK_USED, est.confidence.reasons)
 
     def test_clamping_applied_on_outlier(self):
-        # Historical range: 100K–200K. Weighted estimate of 350K should be clamped.
+        # Historical range: 100K–200K. Blended estimate with strong match + deep
+        # history should push toward 350K, which exceeds clamp upper bound (250K).
         matched = [make_scored_run("a", 0.95, 350_000), make_scored_run("b", 0.90, 340_000)]
         hist = [100_000, 150_000, 200_000]
-        est = estimate_throughput(matched, [], hist, 0)
+        est = estimate_throughput(matched, [], hist, 0, runs_with_context=10)
         self.assertTrue(est.clamped)
         self.assertLessEqual(est.value, max(hist) * CLAMP_UPPER_FACTOR + 1)
 

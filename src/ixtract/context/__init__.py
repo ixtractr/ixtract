@@ -326,6 +326,42 @@ def measure_context(
 
 # ── CLI formatting helpers ─────────────────────────────────────────────
 
+from ixtract.context.runtime import (  # noqa: E402
+    RuntimeContext,
+    WorkerResolution,
+    Advisory,
+    AdvisorySeverity,
+    Verdict,
+    VerdictStatus,
+    resolve_workers,
+    compute_advisories,
+    compute_verdict,
+    format_runtime_context_table,
+    format_worker_resolution,
+    format_advisories,
+    format_verdict,
+)
+
+__all__ = [
+    "ExecutionContext",
+    "RuntimeContext",
+    "WorkerResolution",
+    "Advisory",
+    "AdvisorySeverity",
+    "Verdict",
+    "VerdictStatus",
+    "resolve_workers",
+    "compute_advisories",
+    "compute_verdict",
+    "measure_context",
+    "format_context_summary",
+    "format_runtime_context_table",
+    "format_worker_resolution",
+    "format_advisories",
+    "format_verdict",
+]
+
+
 def format_context_summary(ctx: ExecutionContext) -> str:
     """Format context for CLI display (plan --standard)."""
     load_pct = ""  # populated by caller if connections available

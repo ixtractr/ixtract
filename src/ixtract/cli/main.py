@@ -84,19 +84,61 @@ def profile(object_name, host, port, database, user, password, connection_string
 @click.option("--max-workers", default=None, type=int, help="Max worker count cap")
 @click.option("--standard", "detail_level", flag_value="standard", help="Show worker resolution and estimation reasoning")
 @click.option("--state-db", default="ixtract_state.db", help="State store path")
+# ── RuntimeContext flags (Phase 3A) ──────────────────────────────
+@click.option("--context-file", default=None, help="Path to RuntimeContext JSON file")
+@click.option("--network-quality", default=None, type=click.Choice(["good", "degraded", "poor"]))
+@click.option("--source-load", default=None, type=click.Choice(["low", "normal", "high"]))
+@click.option("--max-source-connections", default=None, type=int)
+@click.option("--max-memory-mb", default=None, type=int)
+@click.option("--concurrent-extractions", default=None, type=int)
+@click.option("--source-maintenance", is_flag=True, default=False, help="Source maintenance is scheduled")
+@click.option("--priority", default=None, type=click.Choice(["low", "normal", "critical"]))
+@click.option("--target-duration", default=None, type=int, help="Target duration in minutes")
+@click.option("--egress-budget-mb", default=None, type=float)
+@click.option("--maintenance-window", default=None, type=int, help="Maintenance window in minutes")
+@click.option("--disk-available-gb", default=None, type=float)
 def plan(object_name, host, port, database, user, password, connection_string,
-         output, compression, max_workers, detail_level, state_db):
+         output, compression, max_workers, detail_level, state_db,
+         context_file, network_quality, source_load, max_source_connections,
+         max_memory_mb, concurrent_extractions, source_maintenance,
+         priority, target_duration, egress_budget_mb, maintenance_window,
+         disk_available_gb):
     """Show the extraction plan without executing."""
     from ixtract.connectors.postgresql import PostgreSQLConnector
     from ixtract.profiler import SourceProfiler
-    from ixtract.planner.planner import plan_extraction, format_plan_summary
+    from ixtract.planner.planner import plan_extraction, format_plan_summary, compute_runtime_analysis
     from ixtract.intent import ExtractionIntent, SourceType, TargetType, ExtractionConstraints
     from ixtract.state import StateStore
     from ixtract.controller import ControllerState
+    from ixtract.context.runtime import (
+        RuntimeContext, format_runtime_context_table,
+        format_worker_resolution, format_advisories, format_verdict,
+    )
     import os
 
     config = _build_config(host, port, database, user, password, connection_string)
     standard = detail_level == "standard"
+
+    # ── Build RuntimeContext ──────────────────────────────────────
+    rt_ctx = None
+    try:
+        rt_ctx = RuntimeContext.from_cli_args(
+            context_file=context_file,
+            network_quality=network_quality,
+            source_load=source_load,
+            max_source_connections=max_source_connections,
+            max_memory_mb=max_memory_mb,
+            concurrent_extractions=concurrent_extractions,
+            source_maintenance_scheduled=source_maintenance or None,
+            priority=priority,
+            target_duration_minutes=target_duration,
+            egress_budget_mb=egress_budget_mb,
+            maintenance_window_minutes=maintenance_window,
+            disk_available_gb=disk_available_gb,
+        )
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
     connector = PostgreSQLConnector()
     connector.connect(config)
@@ -117,9 +159,26 @@ def plan(object_name, host, port, database, user, password, connection_string,
         store = StateStore(state_db)
         ctrl_state = store.get_controller_state("postgresql", object_name)
 
-        exec_plan = plan_extraction(intent, prof, store, ctrl_state)
-        summary = format_plan_summary(exec_plan, prof, ctrl_state)
+        plan_result, worker_source, tp_estimate = plan_extraction(
+            intent, prof, store, ctrl_state, runtime_context=rt_ctx,
+        )
+        summary = format_plan_summary(plan_result, prof, ctrl_state, worker_source=worker_source)
         click.echo(f"\n{summary}")
+
+        # ── RuntimeContext display (Phase 3A) ─────────────────────
+        if rt_ctx is not None:
+            analysis = compute_runtime_analysis(
+                prof, plan_result, ctrl_state, intent, rt_ctx,
+            )
+            if analysis:
+                ctx_table = format_runtime_context_table(rt_ctx)
+                if ctx_table:
+                    click.echo(f"\n{ctx_table}")
+                click.echo(f"\n{format_worker_resolution(analysis['resolution'])}")
+                advs = format_advisories(analysis["advisories"])
+                if advs:
+                    click.echo(f"\n{advs}")
+                click.echo(f"\n{format_verdict(analysis['verdict'])}")
 
         if standard:
             # ── Worker resolution breakdown ──────────────────────
@@ -133,7 +192,7 @@ def plan(object_name, host, port, database, user, password, connection_string,
             click.echo(f"  System CPUs:   {os.cpu_count() or 'unknown'}")
             if max_workers:
                 click.echo(f"  Intent cap:    {max_workers}")
-            click.echo(f"  \u2192 Result:      {exec_plan.worker_count} workers")
+            click.echo(f"  \u2192 Result:      {plan_result.worker_count} workers")
 
             # ── Estimation reasoning ─────────────────────────────
             baseline = store.get_heuristic("postgresql", object_name, "throughput_baseline")
@@ -142,24 +201,24 @@ def plan(object_name, host, port, database, user, password, connection_string,
                 click.echo(f"  Throughput:    {baseline:,.0f} rows/sec (from stored baseline)")
                 click.echo(f"  Confidence:    high (based on actual previous runs)")
             else:
-                click.echo(f"  Throughput:    {exec_plan.cost_estimate.predicted_throughput_rows_sec:,.0f} rows/sec (estimated from profiler)")
+                click.echo(f"  Throughput:    {plan_result.cost_estimate.predicted_throughput_rows_sec:,.0f} rows/sec (estimated from profiler)")
                 click.echo(f"  Confidence:    low (no historical data, first run)")
-            click.echo(f"  Est. rows:     {exec_plan.cost_estimate.predicted_total_rows:,}")
-            click.echo(f"  Est. duration: {_fmt_duration(exec_plan.cost_estimate.predicted_duration_seconds)}")
+            click.echo(f"  Est. rows:     {plan_result.cost_estimate.predicted_total_rows:,}")
+            click.echo(f"  Est. duration: {_fmt_duration(plan_result.cost_estimate.predicted_duration_seconds)}")
 
             # ── Safety detail ────────────────────────────────────
             click.echo(f"\nSafety:")
-            conn_pct = exec_plan.worker_count * 100 // prof.max_connections
-            click.echo(f"  Connections:   {exec_plan.worker_count}/{prof.max_connections} ({conn_pct}%) \u2714")
+            conn_pct = plan_result.worker_count * 100 // prof.max_connections
+            click.echo(f"  Connections:   {plan_result.worker_count}/{prof.max_connections} ({conn_pct}%) \u2714")
             try:
                 stat = os.statvfs(output)
                 free_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
-                need_gb = exec_plan.cost_estimate.predicted_total_bytes / (1024**3)
+                need_gb = plan_result.cost_estimate.predicted_total_bytes / (1024**3)
                 click.echo(f"  Disk:          {free_gb:.1f}GB free, need ~{need_gb:.1f}GB \u2714")
             except OSError:
                 pass
             click.echo(f"  Consistency:   snapshot isolation (REPEATABLE READ)")
-            est_min = exec_plan.cost_estimate.predicted_duration_seconds / 60
+            est_min = plan_result.cost_estimate.predicted_duration_seconds / 60
             if est_min > 30:
                 click.echo(f"  \u26A0 Snapshot duration ({est_min:.0f}m) exceeds 30m threshold")
 
@@ -181,21 +240,64 @@ def plan(object_name, host, port, database, user, password, connection_string,
 @click.option("--window-size", default=5, type=int, help="Controller window size (runs before deciding)")
 @click.option("--state-db", default="ixtract_state.db")
 @click.option("-v", "--verbose", is_flag=True)
+@click.option("--force", is_flag=True, help="Skip NOT RECOMMENDED prompt")
+# ── RuntimeContext flags (Phase 3A) ──────────────────────────────
+@click.option("--context-file", default=None, help="Path to RuntimeContext JSON file")
+@click.option("--network-quality", default=None, type=click.Choice(["good", "degraded", "poor"]))
+@click.option("--source-load", default=None, type=click.Choice(["low", "normal", "high"]))
+@click.option("--max-source-connections", default=None, type=int)
+@click.option("--max-memory-mb", default=None, type=int)
+@click.option("--concurrent-extractions", default=None, type=int)
+@click.option("--source-maintenance", is_flag=True, default=False, help="Source maintenance is scheduled")
+@click.option("--priority", default=None, type=click.Choice(["low", "normal", "critical"]))
+@click.option("--target-duration", default=None, type=int, help="Target duration in minutes")
+@click.option("--egress-budget-mb", default=None, type=float)
+@click.option("--maintenance-window", default=None, type=int, help="Maintenance window in minutes")
+@click.option("--disk-available-gb", default=None, type=float)
 def execute(object_name, host, port, database, user, password, connection_string,
-            output, compression, max_workers, window_size, state_db, verbose):
+            output, compression, max_workers, window_size, state_db, verbose, force,
+            context_file, network_quality, source_load, max_source_connections,
+            max_memory_mb, concurrent_extractions, source_maintenance,
+            priority, target_duration, egress_budget_mb, maintenance_window,
+            disk_available_gb):
     """Extract data from source to Parquet."""
     _setup_logging(verbose)
 
     from ixtract.connectors.postgresql import PostgreSQLConnector
     from ixtract.profiler import SourceProfiler
-    from ixtract.planner.planner import plan_extraction, format_plan_summary
+    from ixtract.planner.planner import plan_extraction, format_plan_summary, compute_runtime_analysis
     from ixtract.intent import ExtractionIntent, SourceType, TargetType, ExtractionConstraints
     from ixtract.state import StateStore
     from ixtract.controller import ParallelismController, ControllerConfig
     from ixtract.diagnosis import DeviationAnalyzer
     from ixtract.engine import ExecutionEngine
+    from ixtract.context.runtime import (
+        RuntimeContext, VerdictStatus,
+        format_advisories, format_verdict,
+    )
 
     config = _build_config(host, port, database, user, password, connection_string)
+
+    # ── Build RuntimeContext ──────────────────────────────────────
+    rt_ctx = None
+    try:
+        rt_ctx = RuntimeContext.from_cli_args(
+            context_file=context_file,
+            network_quality=network_quality,
+            source_load=source_load,
+            max_source_connections=max_source_connections,
+            max_memory_mb=max_memory_mb,
+            concurrent_extractions=concurrent_extractions,
+            source_maintenance_scheduled=source_maintenance or None,
+            priority=priority,
+            target_duration_minutes=target_duration,
+            egress_budget_mb=egress_budget_mb,
+            maintenance_window_minutes=maintenance_window,
+            disk_available_gb=disk_available_gb,
+        )
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
     connector = PostgreSQLConnector()
     connector.connect(config)
@@ -222,8 +324,36 @@ def execute(object_name, host, port, database, user, password, connection_string
         controller = ParallelismController(ControllerConfig(window_size=window_size))
 
         # 4. Plan
-        exec_plan = plan_extraction(intent, prof, store, ctrl_state)
-        click.echo(format_plan_summary(exec_plan, prof, ctrl_state))
+        exec_plan, worker_source, tp_estimate = plan_extraction(
+            intent, prof, store, ctrl_state, runtime_context=rt_ctx,
+        )
+        click.echo(format_plan_summary(exec_plan, prof, ctrl_state, worker_source=worker_source))
+
+        # 4b. RuntimeContext verdict (Phase 3A)
+        if rt_ctx is not None:
+            analysis = compute_runtime_analysis(
+                prof, exec_plan, ctrl_state, intent, rt_ctx,
+            )
+            if analysis:
+                verdict = analysis["verdict"]
+                click.echo(f"\n{format_verdict(verdict)}")
+                warn_advisories = [
+                    a for a in analysis["advisories"]
+                    if a.severity.value in ("fail", "warn")
+                ]
+                for a in warn_advisories:
+                    sym = "\u2717" if a.severity.value == "fail" else "\u26A0"
+                    click.echo(f"  {sym} {a.message}")
+
+                if verdict.status == VerdictStatus.NOT_RECOMMENDED and not force:
+                    if sys.stdin.isatty():
+                        click.echo()
+                        if not click.confirm("Continue?", default=False):
+                            click.echo("Aborted.")
+                            sys.exit(0)
+                    else:
+                        sys.exit(2)
+
         click.echo()
 
         # 5. Execute
@@ -238,6 +368,7 @@ def execute(object_name, host, port, database, user, password, connection_string
             result.run_id, exec_plan.plan_id, intent.intent_hash(),
             "postgresql", object_name, exec_plan.strategy.value,
             exec_plan.worker_count,
+            runtime_context_json=rt_ctx.to_json() if rt_ctx else None,
         )
         store.record_run_end(
             result.run_id, result.status.lower(),

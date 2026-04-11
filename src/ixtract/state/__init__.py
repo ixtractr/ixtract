@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS runs (
     duration_seconds REAL DEFAULT 0.0,
     execution_context_json TEXT DEFAULT '{}',
     confidence_flag  TEXT DEFAULT 'full',
-    adaptive_rules_json TEXT DEFAULT '[]'
+    adaptive_rules_json TEXT DEFAULT '[]',
+    runtime_context_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -151,6 +152,11 @@ class StateStore:
     def _init(self) -> None:
         with self._conn() as c:
             c.executescript(_SCHEMA)
+            # Migration: add runtime_context_json if missing (Phase 3A)
+            try:
+                c.execute("SELECT runtime_context_json FROM runs LIMIT 0")
+            except sqlite3.OperationalError:
+                c.execute("ALTER TABLE runs ADD COLUMN runtime_context_json TEXT")
 
     @contextmanager
     def _conn(self):
@@ -170,14 +176,15 @@ class StateStore:
 
     def record_run_start(self, run_id: str, plan_id: str, intent_hash: str,
                          source: str, obj: str, strategy: str, workers: int,
-                         context_json: str = "{}") -> None:
+                         context_json: str = "{}",
+                         runtime_context_json: Optional[str] = None) -> None:
         with self._conn() as c:
             c.execute(
                 "INSERT INTO runs (run_id,plan_id,intent_hash,source,object,strategy,"
-                "worker_count,start_time,execution_context_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "worker_count,start_time,execution_context_json,runtime_context_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (run_id, plan_id, intent_hash, source, obj, strategy, workers,
-                 _now(), context_json),
+                 _now(), context_json, runtime_context_json),
             )
 
     def record_run_end(self, run_id: str, status: str, rows: int, bytes_: int,

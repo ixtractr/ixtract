@@ -33,6 +33,7 @@ def plan_extraction(
     store: Optional[StateStore] = None,
     controller_state: Optional[ControllerState] = None,
     context: Optional["ExecutionContext"] = None,
+    runtime_context: Optional["RuntimeContext"] = None,
 ) -> tuple:
     """Generate an ExecutionPlan from intent + profile + history + context.
 
@@ -44,12 +45,17 @@ def plan_extraction(
         context:          Current execution context for similarity matching.
                           Measured before calling — planner does not observe
                           the world directly.
+        runtime_context:  User-supplied environmental hints (Phase 3A).
+                          Optional. Constrains worker count via caps/multipliers.
+                          Never feeds learning. See design doc Section 4.
 
     Returns:
         (ExecutionPlan, worker_source, ThroughputEstimate) — 3-tuple.
         worker_source is a label string for CLI display.
         ThroughputEstimate carries confidence and explainability data.
     """
+    from ixtract.context.runtime import resolve_workers as _rt_resolve
+
     # ── Strategy selection ────────────────────────────────────────
     strategy = _select_strategy(profile)
 
@@ -65,9 +71,30 @@ def plan_extraction(
             benchmark = None  # never let benchmark lookup break planning
 
     # ── Worker count resolution ───────────────────────────────────
-    worker_count, worker_source = _resolve_workers(
+    base_workers, worker_source = _resolve_workers(
         profile, controller_state, intent, benchmark
     )
+
+    # ── RuntimeContext worker resolution (Phase 3A) ───────────────
+    if runtime_context is not None:
+        per_worker_mem = 0.0
+        if profile.avg_row_bytes > 0:
+            # Estimate: chunk_size_rows × avg_row_bytes × 2 (buffer) → MB
+            chunk_rows = DEFAULT_CHUNK_TARGET_ROWS
+            per_worker_mem = (chunk_rows * profile.avg_row_bytes * 2) / (1024 ** 2)
+
+        resolution = _rt_resolve(base_workers, runtime_context, per_worker_mem)
+        worker_count = resolution.final_workers
+
+        if worker_count == 0:
+            # Structural infeasibility — still build a plan but with 1 worker
+            # so the plan object is valid. Verdict will flag NOT RECOMMENDED.
+            worker_count = 1
+
+        if worker_count != base_workers:
+            worker_source = f"{worker_source}, runtime context applied"
+    else:
+        worker_count = base_workers
     worker_bounds = (1, min(16, profile.available_connections_safe * 2))
 
     # ── Chunk computation ─────────────────────────────────────────
@@ -389,11 +416,46 @@ def _context_weighted_estimate(
         if r.get("avg_throughput", 0) > 0
     ]
 
+    # ── Compute run ages and context count for blend (Phase 3B) ───
+    import json as _json
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    run_ages: dict[str, float] = {}
+    runs_with_context = 0
+
+    for r in candidates:
+        rid = r.get("run_id", "")
+        # Age in days from start_time
+        st = r.get("start_time", "")
+        if st:
+            try:
+                dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                age = (now - dt).total_seconds() / 86400.0
+                run_ages[rid] = max(0.0, age)
+            except (ValueError, TypeError):
+                run_ages[rid] = 30.0  # conservative default
+        else:
+            run_ages[rid] = 30.0
+
+        # Count runs with valid context
+        ctx_raw = r.get("execution_context_json", "{}")
+        try:
+            ctx_dict = ctx_raw if isinstance(ctx_raw, dict) else _json.loads(ctx_raw)
+            if ctx_dict.get("schema_version") is not None:
+                runs_with_context += 1
+        except Exception:
+            pass
+
     # Score candidates if we have context
     if context is not None and candidates:
         matched, excluded = score_candidates(context, candidates)
         return estimate_throughput(
-            matched, excluded, all_throughputs, _profiler_fallback()
+            matched, excluded, all_throughputs, _profiler_fallback(),
+            runs_with_context=runs_with_context,
+            run_ages=run_ages,
         )
 
     # No context — EWMA over all recent runs
@@ -484,3 +546,68 @@ def _fmt_bytes(b: int) -> str:
     if b >= 1_000:
         return f"{b/1_000:.1f}KB"
     return f"{b}B"
+
+
+# ── RuntimeContext Analysis (for CLI display) ────────────────────────
+
+def compute_runtime_analysis(
+    profile: SourceProfile,
+    plan: ExecutionPlan,
+    controller_state: Optional[ControllerState],
+    intent: ExtractionIntent,
+    runtime_context: Optional["RuntimeContext"],
+    benchmark: Optional[Any] = None,
+) -> Optional[dict]:
+    """Compute full RuntimeContext analysis for CLI display.
+
+    Returns None if no RuntimeContext is provided.
+    Returns dict with keys: resolution, advisories, verdict.
+
+    This exists so the CLI can display the Worker Resolution waterfall,
+    advisories, and verdict without duplicating planner logic.
+    """
+    if runtime_context is None:
+        return None
+
+    from ixtract.context.runtime import (
+        resolve_workers as _rt_resolve,
+        compute_advisories as _rt_advisories,
+        compute_verdict as _rt_verdict,
+    )
+
+    # Reconstruct base workers (same logic as _resolve_workers)
+    base_workers, _ = _resolve_workers(
+        profile, controller_state, intent, benchmark
+    )
+
+    # Per-worker memory estimate
+    per_worker_mem = 0.0
+    if profile.avg_row_bytes > 0:
+        chunk_rows = DEFAULT_CHUNK_TARGET_ROWS
+        per_worker_mem = (chunk_rows * profile.avg_row_bytes * 2) / (1024 ** 2)
+
+    resolution = _rt_resolve(base_workers, runtime_context, per_worker_mem)
+
+    # Advisories
+    est_duration_min = plan.cost_estimate.predicted_duration_seconds / 60
+    tp_per_worker = 0.0
+    if plan.worker_count > 0:
+        tp_per_worker = plan.cost_estimate.predicted_throughput_rows_sec / plan.worker_count
+
+    advisories = _rt_advisories(
+        runtime_context,
+        estimated_duration_minutes=est_duration_min,
+        estimated_output_bytes=plan.cost_estimate.predicted_total_bytes,
+        estimated_workers=plan.worker_count,
+        throughput_per_worker=tp_per_worker,
+        total_rows=plan.cost_estimate.predicted_total_rows,
+    )
+
+    verdict = _rt_verdict(resolution, advisories)
+
+    return {
+        "resolution": resolution,
+        "advisories": advisories,
+        "verdict": verdict,
+    }
+

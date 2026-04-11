@@ -47,16 +47,25 @@ CLAMP_UPPER_FACTOR = 1.25   # hist_max × 1.25
 EWMA_ALPHA = 0.3   # weight on most recent run: 0.3, previous: 0.7
 
 
+# ── Blend + Time-decay (Phase 3B) ─────────────────────────────────────
+TIME_DECAY_LAMBDA = 0.05    # half-life ≈ 14 days
+WEIGHT_EPSILON = 1e-6       # below this, total_weight treated as "no effective matches"
+DEPTH_RAMP_RUNS = 10        # depth_factor reaches 1.0 at this many runs with context
+
+
 @dataclass(frozen=True)
 class ThroughputEstimate:
     """Complete throughput estimate with confidence and explanation."""
     value: float                          # rows/sec
     confidence: ConfidenceAssessment
-    method: str                           # "context_weighted" | "ewma" | "cold_start"
+    method: str                           # "blended" | "ewma" | "cold_start"
     matched_runs: tuple[ScoredRun, ...]   # empty if EWMA/cold_start
     excluded_runs: tuple[ScoredRun, ...]
     clamped: bool                         # True if clamp was applied
     clamp_bounds: Optional[tuple[float, float]]  # (lower, upper) if clamped
+    # Phase 3B blend fields (explainability only)
+    blend_weight: Optional[float] = None         # α ∈ [0,1], None if not blended
+    time_decay_lambda: Optional[float] = None    # λ, None if not blended
 
 
 def estimate_throughput(
@@ -64,67 +73,104 @@ def estimate_throughput(
     excluded: list[ScoredRun],
     all_historical_throughputs: list[float],
     fallback_throughput: float,
+    runs_with_context: int = 0,
+    run_ages: Optional[dict[str, float]] = None,
 ) -> ThroughputEstimate:
-    """Compute a throughput estimate from context-scored runs.
+    """Compute a throughput estimate using continuous blend (Phase 3B).
+
+    Replaces the Phase 2B hard switch with a weighted blend:
+        estimate = α × context_weighted + (1 - α) × EWMA
+    where α = match_quality × depth_factor, clamped to [0, 1].
+
+    Time-decay is applied to context weights: weight = score × exp(-λ × age_days).
 
     Args:
         matched:                     Runs above exclusion threshold, sorted desc by score.
         excluded:                    Runs below exclusion threshold (for CLI display).
         all_historical_throughputs:  All recent throughputs (unfiltered) for EWMA + clamping.
         fallback_throughput:         Used when no history at all (cold start).
+        runs_with_context:           Count of runs with stored ExecutionContext.
+        run_ages:                    Dict of run_id → age in days (for time-decay).
 
     Returns:
         ThroughputEstimate with value, confidence, method, and full explainability data.
     """
+    if run_ages is None:
+        run_ages = {}
+
     hist_min = min(all_historical_throughputs) if all_historical_throughputs else 0.0
     hist_max = max(all_historical_throughputs) if all_historical_throughputs else float("inf")
 
-    # Single-match must be evaluated before has_strong — a single run at 0.55
-    # meets has_strong (≥0.50) but does not meet the single-match threshold (≥0.65).
-    single_match = len(matched) == 1
-    if single_match:
-        single_strong = matched[0].score >= SCORE_SINGLE_MATCH_THRESHOLD
-        use_weighted = single_strong
-    else:
-        has_strong = any(r.score >= SCORE_STRONG_MATCH_THRESHOLD for r in matched)
-        use_weighted = has_strong
-
-    if use_weighted:
-        return _weighted_estimate(
-            matched, excluded,
-            hist_min, hist_max,
-            all_historical_throughputs,
+    # ── Cold start (no history at all) ────────────────────────────
+    if not all_historical_throughputs:
+        confidence = ConfidenceAssessment(
+            level="low",
+            reasons=(ConfidenceReason.FALLBACK_USED, ConfidenceReason.SPARSE_EVIDENCE),
+            matched_run_count=0,
+            max_similarity_score=0.0,
+            throughput_cv=None,
+            dominant_weight=None,
         )
-    else:
-        return _ewma_estimate(
-            matched, excluded,
-            all_historical_throughputs,
-            fallback_throughput,
-            hist_min, hist_max,
+        return ThroughputEstimate(
+            value=fallback_throughput, confidence=confidence,
+            method="cold_start",
+            matched_runs=(), excluded_runs=tuple(excluded),
+            clamped=False, clamp_bounds=None,
         )
 
+    # ── EWMA (always computed — used as blend component or standalone) ─
+    ewma_tp = _compute_ewma(all_historical_throughputs)
 
-def _weighted_estimate(
-    matched: list[ScoredRun],
-    excluded: list[ScoredRun],
-    hist_min: float,
-    hist_max: float,
-    all_throughputs: list[float],
-) -> ThroughputEstimate:
-    """Compute weighted average throughput from matched runs."""
-    total_weight = sum(r.score for r in matched)
+    # ── Context-weighted with time-decay ──────────────────────────
+    if not matched:
+        # No matched runs → pure EWMA
+        return _make_ewma_result(
+            ewma_tp, matched, excluded, all_historical_throughputs,
+            hist_min, hist_max,
+        )
 
-    if total_weight == 0:
-        return _ewma_estimate(matched, excluded, all_throughputs, 0.0, hist_min, hist_max)
+    # Compute time-decayed weights
+    decayed_weights = []
+    for r in matched:
+        age_days = run_ages.get(r.run_id, 30.0)  # default 30 days if missing
+        decay = math.exp(-TIME_DECAY_LAMBDA * age_days)
+        decayed_weights.append(r.score * decay)
 
-    weighted_tp = sum(r.score * r.throughput for r in matched) / total_weight
+    total_weight = sum(decayed_weights)
 
-    # Dominance check
-    max_weight = max(r.score / total_weight for r in matched)
-    dominant = max_weight > DOMINANCE_THRESHOLD
-    dominant_weight = max_weight if dominant else None
+    if total_weight < WEIGHT_EPSILON:
+        # Matched runs exist but carry no meaningful weight (all very old)
+        return _make_ewma_result(
+            ewma_tp, matched, excluded, all_historical_throughputs,
+            hist_min, hist_max,
+        )
 
-    # Throughput CV (undefined for single-match)
+    # Context-weighted throughput (time-decayed)
+    context_tp = sum(
+        w * r.throughput for w, r in zip(decayed_weights, matched)
+    ) / total_weight
+
+    # ── Blend ─────────────────────────────────────────────────────
+    match_quality = max(r.score for r in matched)
+    depth_factor = min(1.0, runs_with_context / DEPTH_RAMP_RUNS)
+    blend_weight = max(0.0, min(1.0, match_quality * depth_factor))
+
+    blended_tp = blend_weight * context_tp + (1 - blend_weight) * ewma_tp
+
+    # ── Clamp ─────────────────────────────────────────────────────
+    lower_bound = hist_min * CLAMP_LOWER_FACTOR if hist_min > 0 else 0.0
+    upper_bound = hist_max * CLAMP_UPPER_FACTOR if hist_max < float("inf") else float("inf")
+    clamped_tp = max(lower_bound, min(upper_bound, blended_tp))
+    clamped = abs(clamped_tp - blended_tp) > 1.0
+
+    # ── Confidence (uses original scores, not decayed — decay is temporal,
+    #    not a quality signal) ─────────────────────────────────────
+    # Dominance check (on decayed weights)
+    max_w = max(decayed_weights)
+    dominant = (max_w / total_weight) > DOMINANCE_THRESHOLD if total_weight > 0 else False
+    dominant_weight = (max_w / total_weight) if dominant else None
+
+    # Throughput CV
     tp_cv: Optional[float] = None
     if len(matched) > 1:
         tps = [r.throughput for r in matched]
@@ -133,13 +179,6 @@ def _weighted_estimate(
             variance = sum((t - mean_tp) ** 2 for t in tps) / len(tps)
             tp_cv = math.sqrt(variance) / mean_tp
 
-    # Clamping
-    lower_bound = hist_min * CLAMP_LOWER_FACTOR if hist_min > 0 else 0.0
-    upper_bound = hist_max * CLAMP_UPPER_FACTOR if hist_max < float("inf") else float("inf")
-    clamped_tp = max(lower_bound, min(upper_bound, weighted_tp))
-    clamped = abs(clamped_tp - weighted_tp) > 1.0
-
-    # Confidence
     confidence = _assess_confidence(
         matched=matched,
         tp_cv=tp_cv,
@@ -151,65 +190,42 @@ def _weighted_estimate(
     return ThroughputEstimate(
         value=round(clamped_tp, 1),
         confidence=confidence,
-        method="context_weighted",
+        method="blended",
         matched_runs=tuple(matched),
         excluded_runs=tuple(excluded),
         clamped=clamped,
         clamp_bounds=(lower_bound, upper_bound) if clamped else None,
+        blend_weight=round(blend_weight, 4),
+        time_decay_lambda=TIME_DECAY_LAMBDA,
     )
 
 
-def _ewma_estimate(
+def _make_ewma_result(
+    ewma_tp: float,
     matched: list[ScoredRun],
     excluded: list[ScoredRun],
     all_throughputs: list[float],
-    fallback_throughput: float,
     hist_min: float,
     hist_max: float,
 ) -> ThroughputEstimate:
-    """EWMA fallback — uses unweighted recent history."""
-    if not all_throughputs:
-        # Cold start — no history at all
-        value = fallback_throughput
-        confidence = ConfidenceAssessment(
-            level="low",
-            reasons=(ConfidenceReason.FALLBACK_USED, ConfidenceReason.SPARSE_EVIDENCE),
-            matched_run_count=0,
-            max_similarity_score=0.0,
-            throughput_cv=None,
-            dominant_weight=None,
-        )
-        return ThroughputEstimate(
-            value=value, confidence=confidence,
-            method="cold_start",
-            matched_runs=(), excluded_runs=tuple(excluded),
-            clamped=False, clamp_bounds=None,
-        )
+    """Build an EWMA-only ThroughputEstimate (used when blend falls back to EWMA)."""
+    lower_bound = hist_min * CLAMP_LOWER_FACTOR if hist_min > 0 else 0.0
+    upper_bound = hist_max * CLAMP_UPPER_FACTOR if hist_max < float("inf") else float("inf")
+    clamped_ewma = max(lower_bound, min(upper_bound, ewma_tp))
+    clamped = abs(clamped_ewma - ewma_tp) > 1.0
 
-    # EWMA over all_throughputs (ordered oldest-first)
-    ewma = all_throughputs[0]
-    for tp in all_throughputs[1:]:
-        ewma = EWMA_ALPHA * tp + (1 - EWMA_ALPHA) * ewma
-
-    # Clamp EWMA too
-    lower_bound = hist_min * CLAMP_LOWER_FACTOR
-    upper_bound = hist_max * CLAMP_UPPER_FACTOR
-    clamped_ewma = max(lower_bound, min(upper_bound, ewma))
-    clamped = abs(clamped_ewma - ewma) > 1.0
-
-    # Confidence: always low when using EWMA
     reasons: list[ConfidenceReason] = [ConfidenceReason.FALLBACK_USED]
     if not matched:
         reasons.append(ConfidenceReason.SPARSE_EVIDENCE)
     elif matched[0].score < SCORE_SINGLE_MATCH_THRESHOLD:
         reasons.append(ConfidenceReason.WEAK_MATCH)
 
-    max_similarity_score = matched[0].score if matched else 0.0
+    max_sim = matched[0].score if matched else 0.0
     confidence = ConfidenceAssessment(
         level="low",
         reasons=_sort_reasons(reasons),
         matched_run_count=len(matched),
-        max_similarity_score=max_similarity_score,
+        max_similarity_score=max_sim,
         throughput_cv=None,
         dominant_weight=None,
     )
@@ -222,6 +238,50 @@ def _ewma_estimate(
         excluded_runs=tuple(excluded),
         clamped=clamped,
         clamp_bounds=(lower_bound, upper_bound) if clamped else None,
+    )
+
+
+def _compute_ewma(throughputs: list[float], alpha: float = EWMA_ALPHA) -> float:
+    """EWMA over throughputs (oldest-first). Returns 0.0 for empty input."""
+    if not throughputs:
+        return 0.0
+    ewma = throughputs[0]
+    for tp in throughputs[1:]:
+        ewma = alpha * tp + (1 - alpha) * ewma
+    return ewma
+
+
+def _ewma_estimate(
+    matched: list[ScoredRun],
+    excluded: list[ScoredRun],
+    all_throughputs: list[float],
+    fallback_throughput: float,
+    hist_min: float,
+    hist_max: float,
+) -> ThroughputEstimate:
+    """EWMA fallback — uses unweighted recent history.
+
+    Kept for backward compatibility with planner's no-context path.
+    """
+    if not all_throughputs:
+        confidence = ConfidenceAssessment(
+            level="low",
+            reasons=(ConfidenceReason.FALLBACK_USED, ConfidenceReason.SPARSE_EVIDENCE),
+            matched_run_count=0,
+            max_similarity_score=0.0,
+            throughput_cv=None,
+            dominant_weight=None,
+        )
+        return ThroughputEstimate(
+            value=fallback_throughput, confidence=confidence,
+            method="cold_start",
+            matched_runs=(), excluded_runs=tuple(excluded),
+            clamped=False, clamp_bounds=None,
+        )
+
+    ewma_tp = _compute_ewma(all_throughputs)
+    return _make_ewma_result(
+        ewma_tp, matched, excluded, all_throughputs, hist_min, hist_max,
     )
 
 
@@ -298,13 +358,9 @@ def compute_ewma(throughputs: list[float], alpha: float = EWMA_ALPHA) -> float:
     """Simple EWMA over a list of throughputs (oldest-first).
 
     Returns 0.0 for empty input.
+    Public API — delegates to _compute_ewma.
     """
-    if not throughputs:
-        return 0.0
-    ewma = throughputs[0]
-    for tp in throughputs[1:]:
-        ewma = alpha * tp + (1 - alpha) * ewma
-    return ewma
+    return _compute_ewma(throughputs, alpha)
 
 
 # ── CLI formatting ────────────────────────────────────────────────────
@@ -316,10 +372,13 @@ def format_estimate_for_cli(estimate: ThroughputEstimate) -> str:
 
     # Method + value
     method_label = {
-        "context_weighted": "context-weighted average",
+        "blended": "blended estimate",
         "ewma": "EWMA fallback",
         "cold_start": "cold-start baseline",
     }.get(estimate.method, estimate.method)
+
+    if estimate.method == "blended" and estimate.blend_weight is not None:
+        method_label += f" (α={estimate.blend_weight:.2f})"
 
     lines.append(
         f"  Estimate:  {estimate.value:,.0f} rows/sec"
