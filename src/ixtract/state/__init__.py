@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS runs (
     execution_context_json TEXT DEFAULT '{}',
     confidence_flag  TEXT DEFAULT 'full',
     adaptive_rules_json TEXT DEFAULT '[]',
-    runtime_context_json TEXT
+    runtime_context_json TEXT,
+    estimated_cost REAL DEFAULT 0.0,
+    actual_cost REAL DEFAULT 0.0
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -157,6 +159,12 @@ class StateStore:
                 c.execute("SELECT runtime_context_json FROM runs LIMIT 0")
             except sqlite3.OperationalError:
                 c.execute("ALTER TABLE runs ADD COLUMN runtime_context_json TEXT")
+            # Migration: add cost columns if missing (Phase 4A)
+            try:
+                c.execute("SELECT estimated_cost FROM runs LIMIT 0")
+            except sqlite3.OperationalError:
+                c.execute("ALTER TABLE runs ADD COLUMN estimated_cost REAL DEFAULT 0.0")
+                c.execute("ALTER TABLE runs ADD COLUMN actual_cost REAL DEFAULT 0.0")
 
     @contextmanager
     def _conn(self):

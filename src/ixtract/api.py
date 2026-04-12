@@ -31,6 +31,7 @@ from ixtract.context.runtime import (
 )
 from ixtract.context.estimator import ThroughputEstimate
 from ixtract.profiler import SourceProfile
+from ixtract.cost import CostConfig, CostEstimate, CostOption
 
 
 # ── Exceptions ───────────────────────────────────────────────────────
@@ -75,6 +76,8 @@ class PlanResult:
     worker_resolution: Optional[WorkerResolution]  # None if no RuntimeContext
     advisories: list[Advisory]
     verdict: Verdict
+    cost_estimate: Optional[CostEstimate] = None        # None if no CostConfig
+    cost_comparison: Optional[list[CostOption]] = None   # None if no CostConfig
 
     @property
     def is_safe(self) -> bool:
@@ -155,6 +158,7 @@ def profile(intent: ExtractionIntent) -> SourceProfile:
 def plan(
     intent: ExtractionIntent,
     runtime_context: Optional[RuntimeContext] = None,
+    cost_config: Optional[CostConfig] = None,
     state_db: str = "ixtract_state.db",
 ) -> PlanResult:
     """Plan an extraction. High-level API — manages connector lifecycle.
@@ -164,10 +168,11 @@ def plan(
     Args:
         intent: What to extract.
         runtime_context: Optional environmental hints (caps, multipliers, advisories).
+        cost_config: Optional cost rates for estimation and comparison.
         state_db: Path to SQLite state store. Explicit, never hidden.
 
     Returns:
-        PlanResult with plan, verdict, advisories, and all explainability data.
+        PlanResult with plan, verdict, advisories, cost, and all explainability data.
 
     Raises:
         ValidationError: If intent or runtime_context is invalid.
@@ -177,7 +182,7 @@ def plan(
     try:
         from ixtract.state import StateStore
         store = StateStore(state_db)
-        return plan_with(intent, connector, store, runtime_context)
+        return plan_with(intent, connector, store, runtime_context, cost_config)
     except Exception as e:
         if isinstance(e, IxtractError):
             raise
@@ -191,6 +196,7 @@ def plan_with(
     connector: Any,
     store: Any,
     runtime_context: Optional[RuntimeContext] = None,
+    cost_config: Optional[CostConfig] = None,
 ) -> PlanResult:
     """Plan an extraction. Low-level API — caller manages connector/store lifecycle.
 
@@ -199,9 +205,10 @@ def plan_with(
         connector: Pre-connected source connector.
         store: Pre-created state store.
         runtime_context: Optional environmental hints.
+        cost_config: Optional cost rates for estimation and comparison.
 
     Returns:
-        PlanResult with plan, verdict, advisories, and all explainability data.
+        PlanResult with plan, verdict, advisories, cost, and all explainability data.
 
     Raises:
         ValidationError: If intent or runtime_context is invalid.
@@ -214,6 +221,7 @@ def plan_with(
         compute_advisories as _rt_advisories,
         compute_verdict as _rt_verdict,
     )
+    from ixtract.cost import compute_cost, compute_cost_comparison
 
     try:
         # Profile
@@ -244,6 +252,29 @@ def plan_with(
                 advisories = analysis["advisories"]
                 verdict = analysis["verdict"]
 
+        # Cost estimation (Phase 4A)
+        cost_est = None
+        cost_comp = None
+        if cost_config is not None and not cost_config.is_zero:
+            cost_est = compute_cost(
+                exec_plan.cost_estimate.predicted_duration_seconds,
+                exec_plan.cost_estimate.predicted_total_bytes,
+                exec_plan.worker_count,
+                cost_config,
+            )
+            tp_per_worker = (
+                exec_plan.cost_estimate.predicted_throughput_rows_sec
+                / max(1, exec_plan.worker_count)
+            )
+            cost_comp = compute_cost_comparison(
+                exec_plan.worker_count,
+                tp_per_worker,
+                exec_plan.cost_estimate.predicted_total_rows,
+                exec_plan.cost_estimate.predicted_total_bytes,
+                cost_config,
+                hard_cap=exec_plan.worker_bounds[1],
+            )
+
         return PlanResult(
             execution_plan=exec_plan,
             intent=intent,
@@ -253,6 +284,8 @@ def plan_with(
             worker_resolution=worker_resolution,
             advisories=advisories,
             verdict=verdict,
+            cost_estimate=cost_est,
+            cost_comparison=cost_comp,
         )
     except Exception as e:
         if isinstance(e, IxtractError):
@@ -411,5 +444,13 @@ def explain(plan_result: PlanResult) -> str:
     # Verdict
     lines.append("")
     lines.append(format_verdict(plan_result.verdict))
+
+    # Cost (Phase 4A — only if cost_config was provided)
+    if plan_result.cost_comparison:
+        from ixtract.cost import format_cost_comparison
+        cost_text = format_cost_comparison(plan_result.cost_comparison)
+        if cost_text:
+            lines.append("")
+            lines.append(cost_text)
 
     return "\n".join(lines)

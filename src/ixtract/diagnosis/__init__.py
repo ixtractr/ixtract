@@ -135,3 +135,121 @@ class DeviationAnalyzer:
             return 0.0
         var = sum((d - mean) ** 2 for d in durations) / n
         return (var ** 0.5) / mean
+
+
+# ── Anomaly Detection (Phase 4A) ─────────────────────────────────────
+
+ANOMALY_BASELINE_WINDOW = 20     # last N successful runs for baseline
+ANOMALY_MIN_BASELINE = 5         # minimum runs required for anomaly detection
+ANOMALY_Z_THRESHOLD = 2.0        # standard deviations for anomaly
+ANOMALY_ZERO_STDDEV_RATIO = 0.20 # 20% threshold when σ ≈ 0
+
+
+@dataclass(frozen=True)
+class AnomalyResult:
+    """Result of anomaly detection for a single run.
+
+    Anomaly detection is observational only — it never changes
+    controller behavior or plan decisions.
+    """
+    is_anomaly: bool
+    current_throughput: float
+    baseline_mean: float
+    baseline_stddev: float
+    z_score: float                # how many σ from mean (absolute)
+    direction: str                # "degradation" | "improvement" | "none"
+    baseline_run_count: int
+    message: str                  # human-readable summary
+
+
+def detect_anomaly(
+    current_throughput: float,
+    baseline_throughputs: list[float],
+) -> AnomalyResult:
+    """Detect throughput anomaly against a broad baseline.
+
+    Baseline is same source + same table, last N successful runs.
+    No context filter — anomaly detection catches unusual events,
+    diagnosis explains why.
+
+    Args:
+        current_throughput:     Throughput of the current run.
+        baseline_throughputs:   Throughputs from recent successful runs (oldest-first).
+
+    Returns:
+        AnomalyResult with detection status, z-score, and direction.
+    """
+    current_throughput = float(current_throughput)
+    n = len(baseline_throughputs)
+
+    # Insufficient baseline — cannot detect
+    if n < ANOMALY_MIN_BASELINE:
+        return AnomalyResult(
+            is_anomaly=False,
+            current_throughput=current_throughput,
+            baseline_mean=0.0,
+            baseline_stddev=0.0,
+            z_score=0.0,
+            direction="none",
+            baseline_run_count=n,
+            message=f"Insufficient baseline ({n}/{ANOMALY_MIN_BASELINE} runs)",
+        )
+
+    mean = sum(baseline_throughputs) / n
+    variance = sum((t - mean) ** 2 for t in baseline_throughputs) / n
+    stddev = variance ** 0.5
+
+    # σ ≈ 0 guard — fall back to percentage threshold
+    if stddev < 1e-6:
+        if mean <= 0:
+            return AnomalyResult(
+                is_anomaly=False, current_throughput=current_throughput,
+                baseline_mean=mean, baseline_stddev=0.0, z_score=0.0,
+                direction="none", baseline_run_count=n,
+                message="Baseline mean is zero — cannot assess",
+            )
+        ratio = abs(current_throughput - mean) / mean
+        is_anomaly = ratio > ANOMALY_ZERO_STDDEV_RATIO
+        if is_anomaly:
+            direction = "degradation" if current_throughput < mean else "improvement"
+        else:
+            direction = "none"
+        return AnomalyResult(
+            is_anomaly=is_anomaly,
+            current_throughput=current_throughput,
+            baseline_mean=round(mean, 1),
+            baseline_stddev=0.0,
+            z_score=round(ratio / ANOMALY_ZERO_STDDEV_RATIO, 2) if is_anomaly else 0.0,
+            direction=direction,
+            baseline_run_count=n,
+            message=(
+                f"Throughput {current_throughput:,.0f} rows/sec "
+                f"deviates {ratio:.0%} from baseline {mean:,.0f} "
+                f"(σ≈0, using {ANOMALY_ZERO_STDDEV_RATIO:.0%} threshold)"
+            ) if is_anomaly else "Within normal range",
+        )
+
+    # Standard z-score detection
+    z_score = abs(current_throughput - mean) / stddev
+
+    if z_score > ANOMALY_Z_THRESHOLD:
+        direction = "degradation" if current_throughput < mean else "improvement"
+        message = (
+            f"Throughput {current_throughput:,.0f} rows/sec is "
+            f"{z_score:.1f}σ {'below' if direction == 'degradation' else 'above'} "
+            f"baseline ({mean:,.0f} ± {stddev:,.0f})"
+        )
+    else:
+        direction = "none"
+        message = "Within normal range"
+
+    return AnomalyResult(
+        is_anomaly=z_score > ANOMALY_Z_THRESHOLD,
+        current_throughput=current_throughput,
+        baseline_mean=round(mean, 1),
+        baseline_stddev=round(stddev, 1),
+        z_score=round(z_score, 2),
+        direction=direction,
+        baseline_run_count=n,
+        message=message,
+    )

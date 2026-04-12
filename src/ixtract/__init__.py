@@ -23,3 +23,4 @@ from ixtract.api import (
 )
 from ixtract.context.runtime import RuntimeContext
 from ixtract.intent import ExtractionIntent
+from ixtract.cost import CostConfig, CostEstimate

@@ -97,12 +97,18 @@ def profile(object_name, host, port, database, user, password, connection_string
 @click.option("--egress-budget-mb", default=None, type=float)
 @click.option("--maintenance-window", default=None, type=int, help="Maintenance window in minutes")
 @click.option("--disk-available-gb", default=None, type=float)
+# ── Cost flags (Phase 4A) ────────────────────────────────────────
+@click.option("--cost-file", default=None, help="Path to CostConfig JSON file")
+@click.option("--compute-rate", default=None, type=float, help="$/hour compute cost")
+@click.option("--egress-rate", default=None, type=float, help="$/GB egress cost")
+@click.option("--connection-rate", default=None, type=float, help="$/connection/hour cost")
 def plan(object_name, host, port, database, user, password, connection_string,
          output, compression, max_workers, detail_level, state_db,
          context_file, network_quality, source_load, max_source_connections,
          max_memory_mb, concurrent_extractions, source_maintenance,
          priority, target_duration, egress_budget_mb, maintenance_window,
-         disk_available_gb):
+         disk_available_gb,
+         cost_file, compute_rate, egress_rate, connection_rate):
     """Show the extraction plan without executing."""
     from ixtract.connectors.postgresql import PostgreSQLConnector
     from ixtract.profiler import SourceProfiler
@@ -180,6 +186,44 @@ def plan(object_name, host, port, database, user, password, connection_string,
                     click.echo(f"\n{advs}")
                 click.echo(f"\n{format_verdict(analysis['verdict'])}")
 
+        # ── Cost display (Phase 4A) ───────────────────────────────
+        from ixtract.cost import CostConfig, compute_cost, compute_cost_comparison, format_cost_comparison
+        cost_cfg = None
+        try:
+            cost_cfg = CostConfig.from_cli_args(
+                cost_file=cost_file,
+                compute_rate=compute_rate,
+                egress_rate=egress_rate,
+                connection_rate=connection_rate,
+            )
+        except ValueError as e:
+            click.echo(f"Cost config error: {e}", err=True)
+
+        if cost_cfg is not None and not cost_cfg.is_zero:
+            cost_est = compute_cost(
+                plan_result.cost_estimate.predicted_duration_seconds,
+                plan_result.cost_estimate.predicted_total_bytes,
+                plan_result.worker_count,
+                cost_cfg,
+            )
+            if cost_est.total > 0:
+                click.echo(f"\n Estimated Cost: ${cost_est.total:.2f} {cost_est.currency}"
+                           f"  (compute ${cost_est.compute:.2f}"
+                           f" + egress ${cost_est.egress:.2f}"
+                           f" + connections ${cost_est.connections:.2f})")
+
+            tp_per_w = plan_result.cost_estimate.predicted_throughput_rows_sec / max(1, plan_result.worker_count)
+            comparison = compute_cost_comparison(
+                plan_result.worker_count, tp_per_w,
+                plan_result.cost_estimate.predicted_total_rows,
+                plan_result.cost_estimate.predicted_total_bytes,
+                cost_cfg,
+                hard_cap=plan_result.worker_bounds[1] if hasattr(plan_result, 'worker_bounds') else 16,
+            )
+            comp_text = format_cost_comparison(comparison)
+            if comp_text:
+                click.echo(f"\n{comp_text}")
+
         if standard:
             # ── Worker resolution breakdown ──────────────────────
             click.echo(f"\nWorker Resolution:")
@@ -254,12 +298,18 @@ def plan(object_name, host, port, database, user, password, connection_string,
 @click.option("--egress-budget-mb", default=None, type=float)
 @click.option("--maintenance-window", default=None, type=int, help="Maintenance window in minutes")
 @click.option("--disk-available-gb", default=None, type=float)
+# ── Cost flags (Phase 4A) ────────────────────────────────────────
+@click.option("--cost-file", default=None, help="Path to CostConfig JSON file")
+@click.option("--compute-rate", default=None, type=float, help="$/hour compute cost")
+@click.option("--egress-rate", default=None, type=float, help="$/GB egress cost")
+@click.option("--connection-rate", default=None, type=float, help="$/connection/hour cost")
 def execute(object_name, host, port, database, user, password, connection_string,
             output, compression, max_workers, window_size, state_db, verbose, force,
             context_file, network_quality, source_load, max_source_connections,
             max_memory_mb, concurrent_extractions, source_maintenance,
             priority, target_duration, egress_budget_mb, maintenance_window,
-            disk_available_gb):
+            disk_available_gb,
+            cost_file, compute_rate, egress_rate, connection_rate):
     """Extract data from source to Parquet."""
     _setup_logging(verbose)
 
