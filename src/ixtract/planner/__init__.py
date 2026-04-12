@@ -227,8 +227,10 @@ class ExecutionPlan:
                 threshold=r["threshold"],
                 action=AdaptiveAction(r["action"]),
                 step_size=r.get("step_size", 1.0),
-                max_activations=r.get("max_activations", 3),
-                cooldown_seconds=r.get("cooldown_seconds", 30),
+                max_activations=r.get("max_activations", 10),
+                cooldown_chunks=r.get("cooldown_chunks", 3),
+                absolute_floor_ms=r.get("absolute_floor_ms", 50.0),
+                backoff_sleep_base=r.get("backoff_sleep_base", 2.0),
             )
             for r in data.get("adaptive_rules", [])
         )

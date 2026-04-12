@@ -413,12 +413,16 @@ def execute(object_name, host, port, database, user, password, connection_string
         # 6. Get previous run BEFORE recording current (so we don't find ourselves)
         recent_runs = store.get_recent_runs("postgresql", object_name, limit=1)
 
-        # 7. Record current run
+        # 7. Record current run (with plan persistence for replay)
+        from ixtract._replay import serialize_plan
+        pj, pfp, pv = serialize_plan(exec_plan)
         store.record_run_start(
             result.run_id, exec_plan.plan_id, intent.intent_hash(),
             "postgresql", object_name, exec_plan.strategy.value,
             exec_plan.worker_count,
             runtime_context_json=rt_ctx.to_json() if rt_ctx else None,
+            plan_json=pj,
+            plan_fingerprint=pfp,
         )
         store.record_run_end(
             result.run_id, result.status.lower(),
@@ -977,6 +981,145 @@ def metrics(run_id, object_name, state_db):
     click.echo(f"  Duration: {_fmt_duration(run['duration_seconds'])}  |  "
                f"Status: {run['status']}  |  Strategy: {run.get('strategy', 'n/a')}")
     click.echo(f"  Rows: {run['total_rows']:,}  |  Bytes: {run.get('total_bytes', 0):,}")
+
+
+@cli.command()
+@click.option("--run-id", required=True, help="Run ID to replay")
+@click.option("--host", default="localhost")
+@click.option("--port", default=5432, type=int)
+@click.option("--database", required=True)
+@click.option("--user", default="")
+@click.option("--password", default="")
+@click.option("--connection-string", default=None)
+@click.option("--output-dir", default=None, help="Override output directory")
+@click.option("--state-db", default="ixtract_state.db")
+@click.option("--force", is_flag=True, help="Replay even if plan version mismatch")
+def replay(run_id, host, port, database, user, password, connection_string,
+           output_dir, state_db, force):
+    """Replay a previous extraction using its stored plan.
+
+    Re-executes the exact same plan — no planner, no profiler, no controller.
+    Guarantees identical decision surface. New run links back to original.
+    """
+    from ixtract.connectors.postgresql import PostgreSQLConnector
+    from ixtract.state import StateStore
+    from ixtract.engine import ExecutionEngine
+    from ixtract._replay import (
+        deserialize_plan, validate_plan_integrity, validate_plan_version,
+        serialize_plan, PlanCorruptionError, UnsupportedPlanVersion,
+    )
+
+    store = StateStore(state_db)
+
+    # 1. Load stored plan
+    plan_data = store.load_plan_for_replay(run_id)
+    if not plan_data:
+        click.echo(f"Run '{run_id}' not found.", err=True)
+        sys.exit(1)
+
+    plan_json = plan_data.get("plan_json")
+    stored_fp = plan_data.get("plan_fingerprint")
+
+    if not plan_json:
+        click.echo(f"Run '{run_id}' has no stored plan (pre-Phase 4B run).", err=True)
+        sys.exit(1)
+
+    # 2. Validate integrity
+    try:
+        if stored_fp:
+            validate_plan_integrity(plan_json, stored_fp)
+        click.echo(f"Plan integrity: verified \u2714")
+    except PlanCorruptionError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    # 3. Deserialize and validate version
+    exec_plan = deserialize_plan(plan_json)
+    try:
+        validate_plan_version(exec_plan.plan_version)
+        click.echo(f"Plan version:   {exec_plan.plan_version} \u2714")
+    except UnsupportedPlanVersion as e:
+        if not force:
+            click.echo(f"Error: {e}", err=True)
+            click.echo("Use --force to replay anyway.")
+            sys.exit(1)
+        click.echo(f"Warning: {e} (--force used, proceeding)")
+
+    # 4. Override output dir if requested
+    if output_dir:
+        from ixtract.planner import WriterConfig
+        wc = exec_plan.writer_config
+        new_wc = WriterConfig(
+            output_format=wc.output_format,
+            output_path=output_dir,
+            compression=wc.compression,
+            partition_by=wc.partition_by,
+            naming_pattern=wc.naming_pattern,
+            temp_path=output_dir,
+            max_file_size_bytes=wc.max_file_size_bytes,
+        )
+        # Reconstruct plan with new writer config
+        from ixtract.planner import ExecutionPlan
+        exec_plan = ExecutionPlan(
+            intent_hash=exec_plan.intent_hash,
+            strategy=exec_plan.strategy,
+            chunks=exec_plan.chunks,
+            cost_estimate=exec_plan.cost_estimate,
+            metadata_snapshot=exec_plan.metadata_snapshot,
+            worker_count=exec_plan.worker_count,
+            worker_bounds=exec_plan.worker_bounds,
+            scheduling=exec_plan.scheduling,
+            adaptive_rules=exec_plan.adaptive_rules,
+            retry_policy=exec_plan.retry_policy,
+            writer_config=new_wc,
+            plan_id=exec_plan.plan_id,
+            plan_version=exec_plan.plan_version,
+            created_at=exec_plan.created_at,
+        )
+
+    click.echo(f"\nReplaying run {run_id}")
+    click.echo(f"  Workers: {exec_plan.worker_count}  |  Chunks: {len(exec_plan.chunks)}"
+               f"  |  Strategy: {exec_plan.strategy.value}")
+    click.echo()
+
+    # 5. Execute — no planner, no profiler, no controller
+    config = _build_config(host, port, database, user, password, connection_string)
+    connector = PostgreSQLConnector()
+    connector.connect(config)
+
+    try:
+        engine = ExecutionEngine(connector)
+        object_name = plan_data.get("object", "unknown")
+        result = engine.execute(exec_plan, object_name)
+
+        # 6. Record replay run
+        pj, pfp, pv = serialize_plan(exec_plan)
+        store.record_run_start(
+            result.run_id, exec_plan.plan_id,
+            plan_data.get("intent_hash", ""),
+            plan_data.get("source", "postgresql"), object_name,
+            exec_plan.strategy.value, exec_plan.worker_count,
+            plan_json=pj, plan_fingerprint=pfp,
+            replay_of=run_id,
+        )
+        store.record_run_end(
+            result.run_id, result.status.lower(),
+            result.total_rows, result.total_bytes,
+            result.avg_throughput, result.duration_seconds,
+            effective_workers=result.effective_workers,
+        )
+
+        # 7. Display result
+        click.echo(f"\nReplay Complete")
+        click.echo(f"  Original run:  {run_id}")
+        click.echo(f"  Replay run:    {result.run_id}")
+        click.echo(f"  Status:        {result.status}")
+        click.echo(f"  Rows:          {result.total_rows:,}")
+        click.echo(f"  Duration:      {_fmt_duration(result.duration_seconds)}")
+        click.echo(f"  Throughput:    {result.avg_throughput:,.0f} rows/sec")
+
+    finally:
+        connector.close()
 
 
 # ── Shared helpers ────────────────────────────────────────────────────

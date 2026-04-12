@@ -37,7 +37,10 @@ CREATE TABLE IF NOT EXISTS runs (
     adaptive_rules_json TEXT DEFAULT '[]',
     runtime_context_json TEXT,
     estimated_cost REAL DEFAULT 0.0,
-    actual_cost REAL DEFAULT 0.0
+    actual_cost REAL DEFAULT 0.0,
+    plan_json TEXT,
+    plan_fingerprint TEXT,
+    replay_of TEXT
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -165,6 +168,13 @@ class StateStore:
             except sqlite3.OperationalError:
                 c.execute("ALTER TABLE runs ADD COLUMN estimated_cost REAL DEFAULT 0.0")
                 c.execute("ALTER TABLE runs ADD COLUMN actual_cost REAL DEFAULT 0.0")
+            # Migration: add replay columns if missing (Phase 4B)
+            try:
+                c.execute("SELECT plan_json FROM runs LIMIT 0")
+            except sqlite3.OperationalError:
+                c.execute("ALTER TABLE runs ADD COLUMN plan_json TEXT")
+                c.execute("ALTER TABLE runs ADD COLUMN plan_fingerprint TEXT")
+                c.execute("ALTER TABLE runs ADD COLUMN replay_of TEXT")
 
     @contextmanager
     def _conn(self):
@@ -185,14 +195,19 @@ class StateStore:
     def record_run_start(self, run_id: str, plan_id: str, intent_hash: str,
                          source: str, obj: str, strategy: str, workers: int,
                          context_json: str = "{}",
-                         runtime_context_json: Optional[str] = None) -> None:
+                         runtime_context_json: Optional[str] = None,
+                         plan_json: Optional[str] = None,
+                         plan_fingerprint: Optional[str] = None,
+                         replay_of: Optional[str] = None) -> None:
         with self._conn() as c:
             c.execute(
                 "INSERT INTO runs (run_id,plan_id,intent_hash,source,object,strategy,"
-                "worker_count,start_time,execution_context_json,runtime_context_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "worker_count,start_time,execution_context_json,runtime_context_json,"
+                "plan_json,plan_fingerprint,replay_of) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (run_id, plan_id, intent_hash, source, obj, strategy, workers,
-                 _now(), context_json, runtime_context_json),
+                 _now(), context_json, runtime_context_json,
+                 plan_json, plan_fingerprint, replay_of),
             )
 
     def record_run_end(self, run_id: str, status: str, rows: int, bytes_: int,
@@ -216,6 +231,31 @@ class StateStore:
                 (source, obj, limit),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def load_plan_for_replay(self, run_id: str) -> Optional[dict]:
+        """Load plan JSON and metadata for replay.
+
+        Returns dict with keys: plan_json, plan_fingerprint, plan_version,
+        source, object, intent_hash. Returns None if run not found.
+        """
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT plan_json, plan_fingerprint, source, object, intent_hash, "
+                "strategy, worker_count "
+                "FROM runs WHERE run_id = ?",
+                (run_id,)
+            ).fetchone()
+            if not row:
+                # Try prefix match
+                row = c.execute(
+                    "SELECT plan_json, plan_fingerprint, source, object, intent_hash, "
+                    "strategy, worker_count "
+                    "FROM runs WHERE run_id LIKE ? ORDER BY start_time DESC LIMIT 1",
+                    (f"{run_id}%",)
+                ).fetchone()
+            if not row:
+                return None
+            return dict(row)
 
     def get_running_count(self, source: str, exclude_run_id: Optional[str] = None) -> int:
         """Count extractions currently running on this source.

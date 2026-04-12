@@ -12,6 +12,8 @@ from ixtract.api import (
     plan,
     plan_with,
     execute,
+    execute_plan,
+    replay,
     profile,
     explain,
     PlanResult,
@@ -24,3 +26,4 @@ from ixtract.api import (
 from ixtract.context.runtime import RuntimeContext
 from ixtract.intent import ExtractionIntent
 from ixtract.cost import CostConfig, CostEstimate
+from ixtract._replay import PlanCorruptionError, UnsupportedPlanVersion

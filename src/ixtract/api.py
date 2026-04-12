@@ -454,3 +454,179 @@ def explain(plan_result: PlanResult) -> str:
             lines.append(cost_text)
 
     return "\n".join(lines)
+
+
+def execute_plan(
+    execution_plan: "ExecutionPlan",
+    intent: ExtractionIntent,
+    state_db: str = "ixtract_state.db",
+) -> ExecutionResult:
+    """Execute a fully resolved plan. No planner, no profiler, no controller.
+
+    This is the replay execution path. The plan must be self-sufficient —
+    if anything is missing, this function fails, it does not guess.
+
+    Args:
+        execution_plan: Fully resolved ExecutionPlan.
+        intent: ExtractionIntent (for connector creation only).
+        state_db: Path to SQLite state store.
+
+    Returns:
+        ExecutionResult.
+
+    Raises:
+        ExecutionError: If extraction fails.
+    """
+    from ixtract._replay import serialize_plan
+
+    connector = _create_connector(intent)
+    try:
+        from ixtract.state import StateStore
+        from ixtract.engine import ExecutionEngine
+
+        store = StateStore(state_db)
+        engine = ExecutionEngine(connector)
+        result = engine.execute(execution_plan, intent.object_name)
+
+        # Persist with plan
+        pj, pfp, pv = serialize_plan(execution_plan)
+        store.record_run_start(
+            result.run_id, execution_plan.plan_id, intent.intent_hash(),
+            intent.source_type.value, intent.object_name,
+            execution_plan.strategy.value, execution_plan.worker_count,
+            plan_json=pj, plan_fingerprint=pfp,
+        )
+        store.record_run_end(
+            result.run_id, result.status.lower(),
+            result.total_rows, result.total_bytes,
+            result.avg_throughput, result.duration_seconds,
+            effective_workers=result.effective_workers,
+        )
+
+        manifest_path = None
+        import os
+        output_path = execution_plan.writer_config.output_path
+        manifest_candidate = os.path.join(output_path, "_manifest.json")
+        if os.path.exists(manifest_candidate):
+            manifest_path = manifest_candidate
+
+        return ExecutionResult(
+            run_id=result.run_id,
+            duration_seconds=result.duration_seconds,
+            rows_extracted=result.total_rows,
+            bytes_written=result.total_bytes,
+            effective_workers=result.effective_workers,
+            manifest_path=manifest_path,
+            status=result.status.lower(),
+        )
+    except Exception as e:
+        if isinstance(e, IxtractError):
+            raise
+        raise ExecutionError(f"Execution failed: {e}") from e
+    finally:
+        connector.close()
+
+
+def replay(
+    run_id: str,
+    intent: ExtractionIntent,
+    force: bool = False,
+    state_db: str = "ixtract_state.db",
+) -> ExecutionResult:
+    """Replay a previous extraction using its stored plan.
+
+    Loads the stored plan, validates integrity and version,
+    then re-executes without any planner involvement.
+    New run is linked to original via replay_of field.
+
+    Args:
+        run_id: ID of the original run to replay.
+        intent: ExtractionIntent (for connector creation).
+        force: If True, proceed despite version mismatch.
+        state_db: Path to SQLite state store.
+
+    Returns:
+        ExecutionResult for the replay run.
+
+    Raises:
+        ValidationError: If run not found or has no stored plan.
+        PlanCorruptionError: If fingerprint mismatch.
+        UnsupportedPlanVersion: If version mismatch and not forced.
+        ExecutionError: If extraction fails.
+    """
+    from ixtract.state import StateStore
+    from ixtract._replay import (
+        deserialize_plan, validate_plan_integrity, validate_plan_version,
+        serialize_plan, PlanCorruptionError, UnsupportedPlanVersion,
+    )
+
+    store = StateStore(state_db)
+
+    # Load stored plan
+    plan_data = store.load_plan_for_replay(run_id)
+    if not plan_data:
+        raise ValidationError(f"Run '{run_id}' not found")
+
+    plan_json = plan_data.get("plan_json")
+    stored_fp = plan_data.get("plan_fingerprint")
+
+    if not plan_json:
+        raise ValidationError(f"Run '{run_id}' has no stored plan (pre-Phase 4B run)")
+
+    # Validate integrity
+    if stored_fp:
+        validate_plan_integrity(plan_json, stored_fp)
+
+    # Deserialize and validate version
+    exec_plan = deserialize_plan(plan_json)
+    if not force:
+        validate_plan_version(exec_plan.plan_version)
+
+    # Execute
+    connector = _create_connector(intent)
+    try:
+        from ixtract.engine import ExecutionEngine
+
+        engine = ExecutionEngine(connector)
+        object_name = plan_data.get("object", intent.object_name)
+        result = engine.execute(exec_plan, object_name)
+
+        # Record replay run
+        pj, pfp, pv = serialize_plan(exec_plan)
+        store.record_run_start(
+            result.run_id, exec_plan.plan_id,
+            plan_data.get("intent_hash", intent.intent_hash()),
+            intent.source_type.value, object_name,
+            exec_plan.strategy.value, exec_plan.worker_count,
+            plan_json=pj, plan_fingerprint=pfp,
+            replay_of=run_id,
+        )
+        store.record_run_end(
+            result.run_id, result.status.lower(),
+            result.total_rows, result.total_bytes,
+            result.avg_throughput, result.duration_seconds,
+            effective_workers=result.effective_workers,
+        )
+
+        manifest_path = None
+        import os
+        output_path = exec_plan.writer_config.output_path
+        manifest_candidate = os.path.join(output_path, "_manifest.json")
+        if os.path.exists(manifest_candidate):
+            manifest_path = manifest_candidate
+
+        return ExecutionResult(
+            run_id=result.run_id,
+            duration_seconds=result.duration_seconds,
+            rows_extracted=result.total_rows,
+            bytes_written=result.total_bytes,
+            effective_workers=result.effective_workers,
+            manifest_path=manifest_path,
+            status=result.status.lower(),
+        )
+    except Exception as e:
+        if isinstance(e, IxtractError):
+            raise
+        raise ExecutionError(f"Replay failed: {e}") from e
+    finally:
+        connector.close()
