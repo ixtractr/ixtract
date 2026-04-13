@@ -328,10 +328,14 @@ class ExecutionEngine:
         chunks_since_last_fire = 0  # for cooldown tracking
 
         # Open a snapshot-isolated connection for this worker
+        # PostgreSQL uses shared snapshot connections. Other connectors
+        # handle isolation per-chunk in extract_chunk() — this is expected.
         try:
             snapshot_conn = self._connector.create_snapshot_connection()
+        except AttributeError:
+            snapshot_conn = None  # connector handles isolation internally
         except Exception as e:
-            log.error(f"  Worker {worker_id}: failed to create snapshot connection: {e}")
+            log.warning(f"  Worker {worker_id}: snapshot connection unavailable: {e}")
             snapshot_conn = None
 
         try:

@@ -38,3 +38,6 @@ tmp/
 # OS
 .DS_Store
 Thumbs.db
+data/
+*.parquet
+ixtract_state.db

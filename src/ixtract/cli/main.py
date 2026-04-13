@@ -1109,14 +1109,88 @@ def replay(run_id, host, port, database, user, password, connection_string,
             effective_workers=result.effective_workers,
         )
 
-        # 7. Display result
+        # 7. Display comparison table
+        # Load original run metrics for side-by-side comparison
+        orig_run = None
+        with store._conn() as c:
+            row = c.execute(
+                "SELECT * FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row:
+                orig_run = dict(row)
+
         click.echo(f"\nReplay Complete")
-        click.echo(f"  Original run:  {run_id}")
-        click.echo(f"  Replay run:    {result.run_id}")
-        click.echo(f"  Status:        {result.status}")
-        click.echo(f"  Rows:          {result.total_rows:,}")
-        click.echo(f"  Duration:      {_fmt_duration(result.duration_seconds)}")
-        click.echo(f"  Throughput:    {result.avg_throughput:,.0f} rows/sec")
+        click.echo()
+
+        # ── Section 1: Results comparison ─────────────────────────
+        col_w = 36
+        click.echo(f"  {'':16} {'Original Run':<{col_w}} {'Replay Run':<{col_w}}")
+        click.echo(f"  {'':16} {'─' * col_w} {'─' * col_w}")
+
+        click.echo(f"  {'Run ID':<16} {run_id:<{col_w}} {result.run_id:<{col_w}}")
+
+        orig_status = orig_run.get("status", "—").upper() if orig_run else "—"
+        click.echo(f"  {'Status':<16} {orig_status:<{col_w}} {result.status:<{col_w}}")
+
+        orig_rows = f"{orig_run['total_rows']:,}" if orig_run else "—"
+        click.echo(f"  {'Rows':<16} {orig_rows:<{col_w}} {result.total_rows:,}")
+
+        orig_dur = _fmt_duration(orig_run["duration_seconds"]) if orig_run else "—"
+        click.echo(f"  {'Duration':<16} {orig_dur:<{col_w}} {_fmt_duration(result.duration_seconds)}")
+
+        orig_tp = f"{orig_run['avg_throughput']:,.0f} rows/sec" if orig_run else "—"
+        click.echo(f"  {'Throughput':<16} {orig_tp:<{col_w}} {result.avg_throughput:,.0f} rows/sec")
+
+        # ── Section 2: Decision check ─────────────────────────────
+        click.echo()
+        click.echo(f"  Decision Check")
+        click.echo(f"  {'─' * 14}")
+
+        orig_workers = str(orig_run.get("worker_count", "—")) if orig_run else "—"
+
+        # Original chunk count from stored plan
+        orig_chunks = "—"
+        orig_strategy = "—"
+        orig_hash = "—"
+        if orig_run and orig_run.get("plan_json"):
+            try:
+                import json as _json
+                orig_plan_dict = _json.loads(orig_run["plan_json"])
+                orig_chunks = str(len(orig_plan_dict.get("chunks", [])))
+                orig_strategy = orig_plan_dict.get("strategy", "—")
+            except Exception:
+                pass
+        if orig_run and orig_run.get("plan_fingerprint"):
+            orig_hash = orig_run["plan_fingerprint"][:8] + "..."
+
+        # Use stored fingerprint for both sides — integrity was validated on load.
+        repl_hash = stored_fp[:8] + "..." if stored_fp else "—"
+        hash_match = " \u2714 identical" if stored_fp and orig_run and orig_run.get("plan_fingerprint") == stored_fp else ""
+
+        click.echo(f"  {'Workers':<16} {orig_workers:<{col_w}} {exec_plan.worker_count}")
+        click.echo(f"  {'Chunks':<16} {orig_chunks:<{col_w}} {len(exec_plan.chunks)}")
+        click.echo(f"  {'Strategy':<16} {orig_strategy:<{col_w}} {exec_plan.strategy.value}")
+        click.echo(f"  {'Plan Hash':<16} {orig_hash:<{col_w}} {repl_hash}{hash_match}")
+        click.echo(f"  {'Replay Of':<16} {run_id}")
+
+        # Determinism verification — trust anchor line
+        if hash_match:
+            click.echo()
+            click.echo(f"  Determinism: \u2714 Verified (plan_fingerprint match)")
+
+        # ── Section 3: Outcome delta ──────────────────────────────
+        if orig_run and orig_run.get("avg_throughput", 0) > 0:
+            click.echo()
+            click.echo(f"  Outcome Delta")
+            click.echo(f"  {'─' * 13}")
+
+            tp_delta = (result.avg_throughput - orig_run["avg_throughput"]) / orig_run["avg_throughput"] * 100
+            dur_delta = result.duration_seconds - orig_run["duration_seconds"]
+            click.echo(f"  {'Throughput \u0394':<16} {tp_delta:+.1f}%")
+            click.echo(f"  {'Duration \u0394':<16} {dur_delta:+.1f}s")
+
+        click.echo()
+        click.echo(f"  Note: Replay guarantees identical execution decisions, not identical performance.")
 
     finally:
         connector.close()

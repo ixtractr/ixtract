@@ -215,9 +215,13 @@ class SQLServerConnector(BaseConnector):
         else:
             worker_conn_str = self._build_conn_str()
 
-        worker_conn = pyodbc.connect(worker_conn_str, autocommit=False)
+        worker_conn = pyodbc.connect(worker_conn_str, autocommit=True)
         try:
+            # CRITICAL: SET TRANSACTION ISOLATION LEVEL must execute OUTSIDE
+            # any transaction. autocommit=True ensures no implicit transaction.
+            # Then we explicitly BEGIN after isolation level is set.
             worker_conn.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
+            worker_conn.autocommit = False
             worker_conn.execute("BEGIN TRANSACTION")
 
             cursor = worker_conn.cursor()
