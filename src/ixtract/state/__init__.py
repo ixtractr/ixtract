@@ -232,6 +232,76 @@ class StateStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_last_run(self, object_name: str) -> Optional[dict]:
+        """Return the most recent run for any object regardless of source type.
+
+        Used to infer source_type without a hardcoded default.
+        Returns None if no runs exist for this object.
+        """
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM runs WHERE object = ? ORDER BY start_time DESC LIMIT 1",
+                (object_name,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_recent_throughputs(
+        self,
+        source: str,
+        obj: str,
+        limit: int = 20,
+    ) -> list[float]:
+        """Return recent successful throughputs scoped by (source_type, object).
+
+        Used exclusively for anomaly detection baseline.
+        Scoped by source_type + object — not by host or database.
+        Host/database scoping deferred to Phase 5.
+
+        Returns oldest-first (required by detect_anomaly).
+        Excludes low-confidence runs (RuntimeContext-constrained).
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT avg_throughput FROM runs "
+                "WHERE source = ? AND object = ? "
+                "AND status = 'success' "
+                "AND avg_throughput > 0 "
+                "AND confidence_flag != 'low' "
+                "ORDER BY start_time DESC LIMIT ?",
+                (source, obj, limit),
+            ).fetchall()
+        # Reverse to oldest-first for detect_anomaly
+        return [r["avg_throughput"] for r in reversed(rows)]
+
+    def get_deviation(self, run_id: str) -> Optional[dict]:
+        """Return the deviation record for a run, or None."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT diagnosed_cause, reasoning, corrective_action, "
+                "deviation_ratio, chunk_variance, throughput_change "
+                "FROM deviations WHERE run_id = ? LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_run_strategy(self, run_id: str) -> Optional[str]:
+        """Return the strategy string for a run, or None."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT strategy FROM runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            return row["strategy"] if row else None
+
+    def get_runtime_context(self, run_id: str) -> Optional[str]:
+        """Return the runtime_context_json string for a run, or None."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT runtime_context_json FROM runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            return row["runtime_context_json"] if row else None
+
     def load_plan_for_replay(self, run_id: str) -> Optional[dict]:
         """Load plan JSON and metadata for replay.
 
@@ -453,7 +523,6 @@ class StateStore:
                 (source, obj),
             ).fetchone()
             return dict(r) if r else None
-
 
     # ── Benchmarks ────────────────────────────────────────────────
 

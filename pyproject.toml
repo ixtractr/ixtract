@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ixtract"
-version = "0.1.0"
+version = "0.9.4"
 description = "Deterministic adaptive extraction runtime"
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [{ name = "ARKY" }]
 keywords = ["extraction", "data", "pipeline", "adaptive", "deterministic"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Topic :: Database",
@@ -22,7 +22,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 
-# Phase 1 core dependencies
 dependencies = [
     "click>=8.0",
     "sqlalchemy>=2.0",
@@ -41,6 +40,12 @@ dev = [
     "ruff",
     "mypy",
 ]
+
+[project.urls]
+Homepage = "https://ixtract.io"
+Documentation = "https://ixtract.io/docs"
+Repository = "https://github.com/ixtractr/ixtract"
+Changelog = "https://github.com/ixtractr/ixtract/blob/main/CHANGELOG.md"
 
 [project.scripts]
 ixtract = "ixtract.cli.main:cli"

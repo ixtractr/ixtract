@@ -174,9 +174,14 @@ def compute_cost(
 class CostOption:
     """One worker-count option in a cost comparison."""
     workers: int
-    estimated_duration_minutes: float
+    estimated_duration_seconds: float      # stored in seconds for formatting
     cost: CostEstimate
     is_planned: bool = False
+
+    @property
+    def estimated_duration_minutes(self) -> float:
+        """Backward-compatible property — returns minutes."""
+        return round(self.estimated_duration_seconds / 60, 1)
 
 
 def compute_cost_comparison(
@@ -212,7 +217,7 @@ def compute_cost_comparison(
         cost = compute_cost(duration_sec, estimated_bytes, w, cost_config)
         options.append(CostOption(
             workers=w,
-            estimated_duration_minutes=round(duration_sec / 60, 1),
+            estimated_duration_seconds=duration_sec,
             cost=cost,
             is_planned=(w == recommended_workers),
         ))
@@ -221,7 +226,7 @@ def compute_cost_comparison(
     filtered: list[CostOption] = []
     for opt in options:
         dominated = any(
-            other.estimated_duration_minutes <= opt.estimated_duration_minutes
+            other.estimated_duration_seconds <= opt.estimated_duration_seconds
             and other.cost.total <= opt.cost.total
             and other is not opt
             for other in options
@@ -236,6 +241,19 @@ def compute_cost_comparison(
         filtered.sort(key=lambda o: o.workers)
 
     return filtered
+
+
+# ── Duration formatting ───────────────────────────────────────────────
+
+def _fmt_cost_duration(seconds: float) -> str:
+    """Format duration for cost comparison output.
+
+    Shows seconds when under 60s to avoid the misleading '0 min' display
+    for short extractions. Shows minutes for longer runs.
+    """
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    return f"{seconds / 60:.0f} min"
 
 
 # ── CLI Formatting ───────────────────────────────────────────────────
@@ -255,8 +273,9 @@ def format_cost_comparison(options: list[CostOption]) -> str:
     lines = [" Cost Comparison (estimated, rates user-declared)"]
     for opt in options:
         marker = "  \u2190 planned" if opt.is_planned else ""
+        duration_str = _fmt_cost_duration(opt.estimated_duration_seconds)
         lines.append(
-            f"   {opt.workers:>2} workers:  {opt.estimated_duration_minutes:>5.0f} min"
+            f"   {opt.workers:>2} workers:  {duration_str:>6}"
             f"   ${opt.cost.total:.2f}{marker}"
         )
 
@@ -264,12 +283,12 @@ def format_cost_comparison(options: list[CostOption]) -> str:
     planned = next((o for o in options if o.is_planned), None)
     cheapest = min(options, key=lambda o: o.cost.total)
     if planned and cheapest and cheapest is not planned and cheapest.cost.total > 0:
-        time_diff = planned.estimated_duration_minutes - cheapest.estimated_duration_minutes
+        time_diff = planned.estimated_duration_seconds - cheapest.estimated_duration_seconds
         cost_diff = planned.cost.total - cheapest.cost.total
         cost_pct = (cost_diff / cheapest.cost.total) * 100
         if time_diff < 0:  # planned is faster
             lines.append(
-                f"\n   Saving {abs(time_diff):.0f} min costs"
+                f"\n   Saving {_fmt_cost_duration(abs(time_diff))} costs"
                 f" ${abs(cost_diff):.2f} more ({cost_pct:+.0f}%)"
             )
 
